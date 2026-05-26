@@ -1,0 +1,22 @@
+{
+  "name": "ai-emp",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "postinstall": "bun run scripts/postinstall.ts",
+    "build": "bun run --filter '*' build",
+    "test": "bun test",
+    "typecheck": "tsc -b",
+    "format": "prettier --write \"packages/*/src/**/*.{ts,tsx,json}\"",
+    "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,json}\""
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "prettier": "^3.3.0",
+    "typescript": "^5.9.0"
+  }
+}

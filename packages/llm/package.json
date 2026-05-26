@@ -1,0 +1,21 @@
+{
+  "name": "@ai-emp/llm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@ai-emp/core": "workspace:*",
+    "@ai-emp/domain": "workspace:*",
+    "@anthropic-ai/sdk": "^0.98.0",
+    "openai": "^6.39.0"
+  }
+}

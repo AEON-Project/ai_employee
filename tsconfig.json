@@ -1,0 +1,15 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/events" },
+    { "path": "./packages/domain" },
+    { "path": "./packages/storage" },
+    { "path": "./packages/core" },
+    { "path": "./packages/llm" },
+    { "path": "./packages/tools" },
+    { "path": "./packages/embedding" },
+    { "path": "./packages/server" },
+    { "path": "./packages/bridge-tg" },
+    { "path": "./packages/cli" }
+  ]
+}

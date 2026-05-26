@@ -1,0 +1,26 @@
+{
+  "name": "@ai-emp/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./domain": "./src/domain/index.ts",
+    "./runtime": "./src/runtime/index.ts",
+    "./memory": "./src/memory/index.ts",
+    "./prompt": "./src/prompt/index.ts",
+    "./metrics": "./src/metrics/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@ai-emp/domain": "workspace:*",
+    "@ai-emp/events": "workspace:*",
+    "@ai-emp/storage": "workspace:*",
+    "zod": "^3.23.0"
+  }
+}

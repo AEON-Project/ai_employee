@@ -1,0 +1,27 @@
+{
+  "name": "@ai-emp/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "bin": {
+    "ai-emp": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "bun test",
+    "build": "bun build ./src/index.ts --compile --outfile ../../dist/ai-emp"
+  },
+  "dependencies": {
+    "@ai-emp/bridge-tg": "workspace:*",
+    "@ai-emp/core": "workspace:*",
+    "@ai-emp/domain": "workspace:*",
+    "@ai-emp/embedding": "workspace:*",
+    "@ai-emp/events": "workspace:*",
+    "@ai-emp/llm": "workspace:*",
+    "@ai-emp/server": "workspace:*",
+    "@ai-emp/storage": "workspace:*",
+    "@ai-emp/tools": "workspace:*"
+  }
+}

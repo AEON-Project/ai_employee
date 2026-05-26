@@ -1,0 +1,36 @@
+node_modules
+.DS_Store
+.idea
+.vscode
+.claude
+
+# build / cache
+dist
+build
+*.tsbuildinfo
+.cache
+.*.bun-build
+
+# bun: lockfile 应该提交到 git，bun.lockb 历史二进制已弃用
+bun.lockb
+
+# test / coverage
+coverage
+.nyc_output
+
+# logs
+*.log
+logs
+
+# env
+.env
+.env.local
+.env.*.local
+
+# spike artifacts
+spikes/*/node_modules
+spikes/*/.models
+spikes/*/bun.lockb
+
+# project data
+.ai-emp-data
