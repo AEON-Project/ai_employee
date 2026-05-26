@@ -275,6 +275,9 @@ export async function cmdBackup(path?: string): Promise<number> {
   }
   const ts = new Date().toISOString().replace(/[:.]/g, '-')
   const dst = path ?? join(dataDir(), 'backups', `db-${ts}.sqlite`)
+  // 确保父目录存在
+  const { mkdir } = await import('node:fs/promises')
+  await mkdir(dirname(dst), { recursive: true })
   await copyFile(src, dst)
   console.log(`✓ 备份到 ${dst}`)
   return 0

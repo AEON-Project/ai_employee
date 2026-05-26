@@ -70,12 +70,16 @@ export function logsDir(): string {
   return join(dataDir(), 'logs')
 }
 
+export function backupsDir(): string {
+  return join(dataDir(), 'backups')
+}
+
 export function dbPath(): string {
   return join(dataDir(), 'db.sqlite')
 }
 
 export async function ensureDirs(): Promise<void> {
-  for (const d of [dataDir(), attachmentsDir(), modelsDir(), logsDir()]) {
+  for (const d of [dataDir(), attachmentsDir(), modelsDir(), logsDir(), backupsDir()]) {
     await mkdir(d, { recursive: true })
   }
 }
