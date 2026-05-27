@@ -43,3 +43,4 @@
 | `4fbea13` | feat(logging): 结构化 NDJSON 日志体系（packages/domain/logger + 埋点 HTTP/scheduler/LLM/SQL + 脱敏 + 「日志先行」工程纪律） | [DEBUGGING.md §3-6](../ai/DEBUGGING.md) |
 | `5b6b3f8` | fix(runtime): ask_user args 健壮化 + dispatch 抛错走 systemPause 不冒泡（日志一行定位 args.questions.map TypeError；状态从卡死「进行中」→ 优雅落「已暂停」可恢复） | — |
 | `c1e1db4` | docs(debugging): e2e 自动化测试加「杀旧 server 启新进程」流程（lsof -ti :7878 -sTCP:LISTEN 比 pgrep 可靠 + EADDRINUSE pitfall） | [DEBUGGING.md §2](../ai/DEBUGGING.md) |
+| `484b92b` | fix(prompt): 给 LLM 暴露 ask_user 等系统 tool 的真实 JSON Schema（ToolDef 加 inputJsonSchema；composer prompt 加结构化提示）— playwright 验证：gpt-4o 正确产出 trigger_reason=missing_info + 2 个 question 数组 → 状态进「等待回答」+ 澄清卡片渲染 | — |

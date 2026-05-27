@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`c1e1db4` docs(debugging): e2e 自动化测试加「杀旧 server 启新进程」流程
+> 最近：`484b92b` fix(prompt): 给 LLM 暴露 ask_user 等系统 tool 的真实 JSON Schema
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
