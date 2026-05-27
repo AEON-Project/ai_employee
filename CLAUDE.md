@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`f0027e4` feat(tools): V2 O10 危险命令审批 — Bash 黑名单拦截（rm -rf / sudo / curl\|sh / dd / mkfs / fork bomb / shutdown），env AIEMP_ALLOW_DANGEROUS=1 跳过；§14 O1-O10 全部完成 🎯
+> 最近：`46b9c83` feat(trajectory): V2 O11 Trajectory dump — 工单 thread 导出 OpenAI chat 格式（调试/备份/分享，不做训练管道）；ai-emp trajectory <reqId> + GET /requirements/:id/trajectory
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
