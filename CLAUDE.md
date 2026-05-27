@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`f7a2433` feat(memory): V2 O2 memory 闭环强化 — emit_lesson 系统 tool（LLM 主动）+ reject 自动沉淀（用户被动）；PRD §3「纠错沉淀」核心机制最后一环闭环
+> 最近：`e05ea62` feat(runtime+tools): V2 O3 sub-agent 协作 — spawn_employee 系统 tool；父员工同步派子任务给另一员工，嵌套 execute 后 tool_result 回传；PRD「组织+岗位」心智第一次能跑起来
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
