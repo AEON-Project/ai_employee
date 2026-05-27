@@ -44,7 +44,11 @@ export function mountApi(app: Hono, deps: ServerDeps) {
   api.post('/projects', async (c) => {
     const body = await c.req.json()
     const parsed = z
-      .object({ name: z.string().min(1), description: z.string().optional() })
+      .object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        workdir: z.string().nullable().optional(),
+      })
       .safeParse(body)
     if (!parsed.success) return c.json({ error: 'invalid', issues: parsed.error.issues }, 400)
     const id = repos.projects.create(parsed.data)
@@ -57,7 +61,11 @@ export function mountApi(app: Hono, deps: ServerDeps) {
   api.patch('/projects/:id', async (c) => {
     const body = await c.req.json()
     const parsed = z
-      .object({ name: z.string().optional(), description: z.string().optional() })
+      .object({
+        name: z.string().optional(),
+        description: z.string().optional(),
+        workdir: z.string().nullable().optional(),
+      })
       .safeParse(body)
     if (!parsed.success) return c.json({ error: 'invalid', issues: parsed.error.issues }, 400)
     repos.projects.update(c.req.param('id'), parsed.data)
@@ -238,6 +246,23 @@ export function mountApi(app: Hono, deps: ServerDeps) {
     const r = repos.requirements.findById(c.req.param('id'))
     return r ? c.json(r) : c.json({ error: 'not_found' }, 404)
   })
+  api.patch('/requirements/:id', async (c) => {
+    const body = await c.req.json()
+    const parsed = z
+      .object({
+        title: z.string().min(1).optional(),
+        description: z.string().optional(),
+        priority: z.enum(['P0', 'P1', 'P2']).optional(),
+      })
+      .safeParse(body)
+    if (!parsed.success) return c.json({ error: 'invalid', issues: parsed.error.issues }, 400)
+    const id = c.req.param('id')
+    repos.requirements.update(id, {
+      ...parsed.data,
+      priority: parsed.data.priority as Priority | undefined,
+    })
+    return c.json(repos.requirements.findById(id))
+  })
 
   // ── 需求命令 ─────────────────────────────────────────────
   api.post('/requirements/:id/assign', async (c) => {
@@ -353,6 +378,65 @@ export function mountApi(app: Hono, deps: ServerDeps) {
       sinceSeq: sinceSeq >= 0 ? sinceSeq : undefined,
     })
     return c.json({ thread, messages })
+  })
+
+  // ── git diff（待验收页面用，展示员工真实改动）────────────
+  // 需要 req.project.workdir 存在 + 该目录是 git 仓库
+  api.get('/requirements/:id/git-diff', async (c) => {
+    const req = repos.requirements.findById(c.req.param('id'))
+    if (!req) return c.json({ error: 'not_found' }, 404)
+    if (!req.projectId) return c.json({ error: 'no_project' }, 400)
+    const project = repos.projects.findById(req.projectId)
+    if (!project) return c.json({ error: 'project_not_found' }, 404)
+    if (!project.workdir) {
+      return c.json(
+        { error: 'no_workdir', message: '该项目未配置 workdir（本地代码仓库根目录）' },
+        400,
+      )
+    }
+    const cwd = project.workdir
+    const { spawn } = await import('node:child_process')
+    const runGit = (args: string[]): Promise<{ stdout: string; stderr: string; code: number }> =>
+      new Promise((resolve) => {
+        const child = spawn('git', args, { cwd })
+        let stdout = ''
+        let stderr = ''
+        const MAX = 200_000
+        child.stdout.on('data', (b: Buffer) => {
+          if (stdout.length < MAX) stdout += b.toString('utf8').slice(0, MAX - stdout.length)
+        })
+        child.stderr.on('data', (b: Buffer) => {
+          if (stderr.length < MAX) stderr += b.toString('utf8').slice(0, MAX - stderr.length)
+        })
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL')
+          } catch {
+            /* ignore */
+          }
+        }, 10_000)
+        child.on('error', (err) => {
+          clearTimeout(timer)
+          resolve({ stdout: '', stderr: String(err), code: -1 })
+        })
+        child.on('close', (code) => {
+          clearTimeout(timer)
+          resolve({ stdout, stderr, code: code ?? -1 })
+        })
+      })
+    const [status, stat, diff] = await Promise.all([
+      runGit(['status', '--porcelain']),
+      runGit(['diff', '--stat']),
+      runGit(['diff']),
+    ])
+    return c.json({
+      workdir: cwd,
+      hasChanges: status.stdout.trim().length > 0,
+      status: status.stdout,
+      stat: stat.stdout,
+      diff: diff.stdout,
+      truncated: diff.stdout.length >= 200_000,
+    })
   })
 
   // ── conventions ──────────────────────────────────────────

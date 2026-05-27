@@ -71,7 +71,110 @@ export function RequirementDetailPage({ reqId }: { reqId: string }) {
         )}
       </div>
 
-      {req.status === '待验收' && <ApprovePanel reqId={req.id} onChanged={refreshAll} />}
+      {req.status === '待验收' && (
+        <>
+          <GitDiffPanel reqId={req.id} />
+          <ApprovePanel reqId={req.id} onChanged={refreshAll} />
+        </>
+      )}
+    </div>
+  )
+}
+
+interface GitDiffResponse {
+  workdir?: string
+  hasChanges?: boolean
+  status?: string
+  stat?: string
+  diff?: string
+  truncated?: boolean
+  error?: string
+  message?: string
+}
+
+function GitDiffPanel({ reqId }: { reqId: string }) {
+  const [data, setData] = useState<GitDiffResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [showFull, setShowFull] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    api
+      .get<GitDiffResponse>(`/api/requirements/${reqId}/git-diff`)
+      .then((r) => {
+        if (!cancelled) setData(r)
+      })
+      .catch((e: unknown) => {
+        if (!cancelled)
+          setData({ error: 'fetch_failed', message: e instanceof Error ? e.message : String(e) })
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [reqId])
+
+  if (loading) return <div className="card text-sm text-muted">📊 加载 Git Diff...</div>
+  if (!data) return null
+  if (data.error) {
+    return (
+      <div className="card text-sm">
+        <div className="font-semibold mb-1">📊 Git Diff（项目工作区改动）</div>
+        <p className="text-muted">
+          {data.error === 'no_workdir'
+            ? '⚠️ 该需求所属项目未配置 workdir（本地代码仓库根目录）。前往项目详情页配置后即可在此处显示员工真实改动用于验收。'
+            : `加载失败：${data.message ?? data.error}`}
+        </p>
+      </div>
+    )
+  }
+  if (!data.hasChanges) {
+    return (
+      <div className="card text-sm">
+        <div className="font-semibold mb-1">📊 Git Diff（{data.workdir}）</div>
+        <p className="text-warn">
+          ⚠️ <strong>员工没有任何真实代码改动</strong>（git status 为空 / git diff 为空）。
+          交付物里声称的"已修改"可能是<strong>谎报</strong>，建议 reject 驳回。
+        </p>
+      </div>
+    )
+  }
+  const diff = data.diff ?? ''
+  const previewLines = 100
+  const lines = diff.split('\n')
+  const isLong = lines.length > previewLines
+  const shown = showFull || !isLong ? diff : lines.slice(0, previewLines).join('\n')
+  return (
+    <div className="card text-sm">
+      <div className="font-semibold mb-2">📊 Git Diff（{data.workdir}）</div>
+      <div className="mb-2">
+        <div className="text-xs text-muted mb-1">改动统计：</div>
+        <pre className="whitespace-pre-wrap text-xs bg-muted/10 rounded p-2">{data.stat}</pre>
+      </div>
+      <div>
+        <div className="text-xs text-muted mb-1">
+          完整 diff
+          {isLong
+            ? `（共 ${lines.length} 行${showFull ? '' : `，预览前 ${previewLines} 行`}）`
+            : ''}
+          {data.truncated ? ' [服务端已截断 200KB]' : ''}：
+        </div>
+        <pre className="whitespace-pre-wrap text-xs bg-muted/10 rounded p-2 max-h-[400px] overflow-auto">
+          {shown}
+          {!showFull && isLong && '\n... (省略)'}
+        </pre>
+        {isLong && (
+          <button
+            type="button"
+            className="text-xs text-blue-500 mt-1"
+            onClick={() => setShowFull((v) => !v)}
+          >
+            {showFull ? '收起' : `展开全部 ${lines.length} 行`}
+          </button>
+        )}
+      </div>
     </div>
   )
 }

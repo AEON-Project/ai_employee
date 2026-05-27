@@ -35,6 +35,8 @@ export const projects = sqliteTable('projects', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   description: text('description').notNull().default(''),
+  // V1.1: 本地代码仓库根目录绝对路径；用于「待验收」时跑 git diff 展示员工真实改动
+  workdir: text('workdir'),
   knowledgeStatus: text('knowledge_status', {
     enum: ['idle', 'indexing', 'ready', 'error'],
   })

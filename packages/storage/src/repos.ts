@@ -58,11 +58,17 @@ const now = () => new Date()
 export class ProjectsRepo {
   constructor(private readonly db: DB) {}
 
-  create(input: { name: string; description?: string }): string {
+  create(input: { name: string; description?: string; workdir?: string | null }): string {
     const id = newId()
     this.db
       .insert(projects)
-      .values({ id, name: input.name, description: input.description ?? '', createdAt: now() })
+      .values({
+        id,
+        name: input.name,
+        description: input.description ?? '',
+        workdir: input.workdir ?? null,
+        createdAt: now(),
+      })
       .run()
     return id
   }
@@ -75,7 +81,10 @@ export class ProjectsRepo {
     return this.db.select().from(projects).where(eq(projects.id, id)).all()[0] ?? null
   }
 
-  update(id: string, patch: Partial<{ name: string; description: string }>) {
+  update(
+    id: string,
+    patch: Partial<{ name: string; description: string; workdir: string | null }>,
+  ) {
     this.db.update(projects).set(patch).where(eq(projects.id, id)).run()
   }
 
@@ -341,6 +350,11 @@ export class RequirementsRepo {
   setStatus(id: string, status: RequirementStatus, opts: { completedAt?: Date } = {}) {
     const patch: Partial<typeof requirements.$inferInsert> = { status }
     if (opts.completedAt) patch.completedAt = opts.completedAt
+    this.db.update(requirements).set(patch).where(eq(requirements.id, id)).run()
+  }
+
+  update(id: string, patch: Partial<{ title: string; description: string; priority: Priority }>) {
+    if (Object.keys(patch).length === 0) return
     this.db.update(requirements).set(patch).where(eq(requirements.id, id)).run()
   }
 
