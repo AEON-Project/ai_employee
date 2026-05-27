@@ -17,6 +17,7 @@
  */
 
 import { type Plan, type RequirementId, type PauseReason, type BudgetUsed } from '@ai-emp/domain'
+import { resolveEnvRef, resolveEnvRefStrict } from '@ai-emp/storage'
 import { BudgetTracker } from './budget.js'
 import { transition } from './state-machine.js'
 import { composeMinimalPrompt } from './prompt-minimal.js'
@@ -62,11 +63,15 @@ export async function executeRequirement(
     )
   }
 
+  // 员工字段支持 env:// 协议；model/baseUrl 解析失败时降级或抛错
+  const resolvedModel = resolveEnvRefStrict(employee.modelName, 'employee.modelName')
+  const resolvedBaseUrl = resolveEnvRef(employee.modelBaseUrl ?? null) ?? undefined
+
   const llm = services.llm.create({
     provider: employee.modelProvider,
-    model: employee.modelName,
+    model: resolvedModel,
     apiKey,
-    baseUrl: employee.modelBaseUrl ?? undefined,
+    baseUrl: resolvedBaseUrl,
     temperature: employee.modelTemperature ?? undefined,
     maxTokens: employee.modelMaxTokens ?? undefined,
   })

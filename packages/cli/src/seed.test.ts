@@ -40,12 +40,18 @@ describe('seedAll', () => {
     expect(skills.map((s) => s.skill.name)).toEqual(['代码生成与解释', '需求拆解'])
   })
 
-  test('员工 modelKeyRef = REPLACE_ME（提醒用户改）', () => {
+  test('样板员工的 model 字段全部是 env:// 引用', () => {
     const { db, sqlite } = openDatabase({ path: ':memory:' })
     migrate(sqlite)
     const repos = createRepos(db)
     seedAll(repos)
     const emps = repos.employees.list()
-    for (const e of emps) expect(e.modelKeyRef).toBe('REPLACE_ME')
+    for (const e of emps) {
+      expect(e.modelKeyRef).toStartWith('env://')
+      expect(e.modelName).toStartWith('env://')
+    }
+    const deepseek = emps.find((e) => e.name === '小数')!
+    expect(deepseek.modelBaseUrl).toStartWith('env://')
+    expect(deepseek.modelProvider).toBe('openai-compat')
   })
 })

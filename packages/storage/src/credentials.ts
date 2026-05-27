@@ -12,6 +12,7 @@ import type { CredentialKind } from '@ai-emp/domain'
 import { credentialRefs } from './schema.js'
 import type { DB } from './db.js'
 import type { KeychainStore } from './keychain.js'
+import { isEnvRef, resolveEnvRef } from './env-ref.js'
 
 export interface CredentialRecord {
   id: string
@@ -59,18 +60,12 @@ export class CredentialsRepo {
   /**
    * 按 keychainKey 读 secret（runtime/cli 已知 key 时跳过 DB）。
    *
-   * 支持两种引用协议：
+   * 支持两种引用协议（见 env-ref.ts）：
    *   - 普通 keychain key：`my-llm-key` → 从 OS keychain 读
    *   - 环境变量引用：`env://AIEMP_ANTHROPIC_API_KEY` → 从 process.env 读
-   *
-   * env:// 形式方便开发期把 key 写 .env；生产建议改用 keychain。
    */
   readSecretByKey(keychainKey: string): Promise<string | null> {
-    if (keychainKey.startsWith('env://')) {
-      const envName = keychainKey.slice('env://'.length)
-      const v = process.env[envName]
-      return Promise.resolve(v && v.length > 0 ? v : null)
-    }
+    if (isEnvRef(keychainKey)) return Promise.resolve(resolveEnvRef(keychainKey))
     return this.keychain.get(keychainKey)
   }
 

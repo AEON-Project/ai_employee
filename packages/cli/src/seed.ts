@@ -19,7 +19,12 @@ interface SeedEmployee {
   role: string
   persona: string
   provider: LLMProvider
+  /** 直接写死 或 env://... 引用；默认走 env */
   model: string
+  /** OpenAI 兼容用；同上支持 env:// */
+  baseUrl?: string
+  /** keychain key 名 或 env://... 引用 */
+  keyRef: string
   skills: string[] // skill name 引用
 }
 
@@ -118,13 +123,16 @@ const PROJECTS: SeedProject[] = [
   },
 ]
 
+// 样板员工 default 全部走 env:// —— 用户在 .env 配 LLM 后开箱即用，
+// 不想 / 不需要 .env 时改成 keychain 路径 + 写死 model 即可。
 const EMPLOYEES: SeedEmployee[] = [
   {
     name: '小李',
     role: '前端工程师',
     persona: '简洁直接，类型严格，喜欢用最少的依赖解决问题',
     provider: 'anthropic',
-    model: 'claude-opus-4-7',
+    model: 'env://AIEMP_ANTHROPIC_MODEL',
+    keyRef: 'env://AIEMP_ANTHROPIC_API_KEY',
     skills: ['代码生成与解释', '需求拆解'],
   },
   {
@@ -132,7 +140,8 @@ const EMPLOYEES: SeedEmployee[] = [
     role: 'UI 设计师',
     persona: '审美在线，关注细节，倾向极简主义',
     provider: 'anthropic',
-    model: 'claude-opus-4-7',
+    model: 'env://AIEMP_ANTHROPIC_MODEL',
+    keyRef: 'env://AIEMP_ANTHROPIC_API_KEY',
     skills: ['需求拆解', '通用对话'],
   },
   {
@@ -140,7 +149,8 @@ const EMPLOYEES: SeedEmployee[] = [
     role: '文案策划',
     persona: '善于讲故事，喜欢"金句"，对产品调性敏感',
     provider: 'anthropic',
-    model: 'claude-opus-4-7',
+    model: 'env://AIEMP_ANTHROPIC_MODEL',
+    keyRef: 'env://AIEMP_ANTHROPIC_API_KEY',
     skills: ['长文写作', '营销文案'],
   },
   {
@@ -148,7 +158,8 @@ const EMPLOYEES: SeedEmployee[] = [
     role: '用户研究员',
     persona: '严谨，会从原始数据中找规律，不轻易下结论',
     provider: 'anthropic',
-    model: 'claude-opus-4-7',
+    model: 'env://AIEMP_ANTHROPIC_MODEL',
+    keyRef: 'env://AIEMP_ANTHROPIC_API_KEY',
     skills: ['用户访谈整理', '文档总结'],
   },
   {
@@ -156,7 +167,9 @@ const EMPLOYEES: SeedEmployee[] = [
     role: '数据分析师',
     persona: '逻辑清晰，喜欢用数字说话，常引用对比/趋势',
     provider: 'openai-compat',
-    model: 'deepseek-chat',
+    model: 'env://AIEMP_DEEPSEEK_MODEL',
+    baseUrl: 'env://AIEMP_DEEPSEEK_BASE_URL',
+    keyRef: 'env://AIEMP_DEEPSEEK_API_KEY',
     skills: ['文档总结', '通用对话'],
   },
 ]
@@ -221,7 +234,8 @@ export function seedAll(repos: Repos): SeedResult {
       persona: e.persona,
       modelProvider: e.provider,
       modelName: e.model,
-      modelKeyRef: 'REPLACE_ME',
+      modelKeyRef: e.keyRef,
+      ...(e.baseUrl ? { modelBaseUrl: e.baseUrl } : {}),
     })
     result.employees++
     e.skills.forEach((skillName, idx) => {
