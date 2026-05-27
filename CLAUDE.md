@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`5b6b3f8` fix(runtime): ask_user args 健壮化 + dispatch 抛错走 systemPause
+> 最近：`c1e1db4` docs(debugging): e2e 自动化测试加「杀旧 server 启新进程」流程
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
