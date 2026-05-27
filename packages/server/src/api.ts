@@ -338,6 +338,22 @@ export function mountApi(app: Hono, deps: ServerDeps) {
     const r = await revertToCheckpoint(services, c.req.param('id'))
     return c.json(r)
   })
+  // V2 O11 Trajectory dump — 把工单完整 thread 导出为 OpenAI chat 格式
+  // Accept: application/x-ndjson → JSONL；其他 → JSON 对象（默认）
+  api.get('/requirements/:id/trajectory', async (c) => {
+    const reqId = c.req.param('id')
+    const { extractTrajectory, toJsonl } = await import('@ai-emp/core/trajectory')
+    try {
+      const dump = extractTrajectory(services.repos, reqId)
+      const accept = c.req.header('accept') ?? ''
+      if (accept.includes('application/x-ndjson') || c.req.query('format') === 'jsonl') {
+        return c.text(toJsonl(dump), 200, { 'content-type': 'application/x-ndjson' })
+      }
+      return c.json(dump)
+    } catch (err) {
+      return c.json({ error: String(err) }, 404)
+    }
+  })
   api.post('/requirements/:id/force-end', async (c) => {
     const body = await c.req.json().catch(() => ({}))
     const keep = body.keep === true

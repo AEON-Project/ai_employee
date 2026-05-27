@@ -14,6 +14,7 @@ import {
   cmdSeed,
   cmdServe,
   cmdStatus,
+  cmdTrajectory,
 } from './commands.js'
 
 async function main(argv: string[]): Promise<number> {
@@ -49,6 +50,15 @@ async function main(argv: string[]): Promise<number> {
       return cmdRecover()
     case 'metrics':
       return cmdMetrics()
+    case 'trajectory': {
+      const reqId = rest[0]
+      if (!reqId) {
+        console.error('用法: ai-emp trajectory <req-id> [--jsonl]')
+        return 1
+      }
+      const jsonl = rest.includes('--jsonl')
+      return cmdTrajectory(reqId, { format: jsonl ? 'jsonl' : 'json' })
+    }
     case 'seed':
       return cmdSeed({ reset: rest.includes('--reset') })
     case 'backup':
@@ -88,6 +98,8 @@ function printHelp() {
 用法:
   ai-emp init                       首次引导（生成 ~/.ai-emp/、token）
   ai-emp serve [--port 7878]        启动 HTTP + WS 服务
+  ai-emp trajectory <req-id> [--jsonl]
+                                    导出工单完整 thread 为 OpenAI chat 格式（默认 JSON，可 jsonl）
   ai-emp status                     列出活跃需求
   ai-emp logs <req-id> [-f]         查看思维链
   ai-emp keychain set <name> [v]    写入凭证（也可走 AIEMP_SECRET）

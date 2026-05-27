@@ -379,6 +379,35 @@ export async function cmdMetrics(): Promise<number> {
 }
 
 // ──────────────────────────────────────────────────────────────
+// V2 O11 trajectory — 导出工单完整 thread 为 OpenAI chat 格式
+// ──────────────────────────────────────────────────────────────
+export async function cmdTrajectory(
+  reqId: string,
+  opts: { format?: 'jsonl' | 'json' } = {},
+): Promise<number> {
+  if (!reqId) {
+    console.error('用法：ai-emp trajectory <reqId> [--jsonl]')
+    return 1
+  }
+  const { extractTrajectory, toJsonl } = await import('@ai-emp/core/trajectory')
+  const boot = await bootServices()
+  try {
+    const dump = extractTrajectory(boot.services.repos, reqId)
+    if (opts.format === 'jsonl') {
+      process.stdout.write(toJsonl(dump))
+    } else {
+      console.log(JSON.stringify(dump, null, 2))
+    }
+    return 0
+  } catch (err) {
+    console.error(`错误：${String(err)}`)
+    return 1
+  } finally {
+    boot.close()
+  }
+}
+
+// ──────────────────────────────────────────────────────────────
 // seed — 导入样板项目 / 员工 / 技能（按名字幂等；--reset 清空重导）
 // ──────────────────────────────────────────────────────────────
 export async function cmdSeed(opts: { reset?: boolean } = {}): Promise<number> {
