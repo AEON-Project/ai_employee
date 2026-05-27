@@ -91,6 +91,66 @@ export function _resetSessionsForTest(): void {
   processExitNotifier = () => {}
 }
 
+// ── V2 O10 危险命令审批 ──────────────────────────────────────
+//
+// 阻止 LLM 跑明显高危的命令（除非 env AIEMP_ALLOW_DANGEROUS=1 全局跳过）。
+// 拒绝时返回 exitCode=126 + stderr 含 DANGEROUS_COMMAND_BLOCKED，让 LLM 看到
+// 自然调 ask_user 让用户协调（不破坏状态机）。
+//
+// 黑名单条目刻意保守 — 命中即拒，不评估上下文。如有误伤可：
+//   1. LLM 改命令绕开（如 rm 具体文件而非 rm -rf /）
+//   2. 用户 ack 后 LLM 调 ask_user 拿到批准重发
+//   3. 终极: AIEMP_ALLOW_DANGEROUS=1 全局开（不推荐 — 失去保护）
+export interface DangerCheckResult {
+  dangerous: boolean
+  reason?: string
+}
+
+export function checkDangerousCommand(command: string): DangerCheckResult {
+  const c = command.trim()
+  if (!c) return { dangerous: false }
+  // rm -rf 根目录 / 用户目录 / /*  / ~/.* 等灾难性删除
+  if (
+    /\brm\s+(-[rRf]+\s+|--recursive\s+|--force\s+)+(\/(\s|$)|\/\*|\/etc|\/usr|\/var|\/Users|\/home|~(\s|$)|~\/)/i.test(
+      c,
+    )
+  ) {
+    return {
+      dangerous: true,
+      reason: 'rm -rf 根目录 / 系统目录 / 用户目录 — 不可恢复',
+    }
+  }
+  // sudo / su / doas 提权
+  if (/\b(sudo|doas|su)\b/.test(c)) {
+    return { dangerous: true, reason: '提权命令（sudo / doas / su）' }
+  }
+  // curl/wget pipe shell —— 经典供应链注入
+  if (/\b(curl|wget|fetch)\b[^|\n]*\|\s*(sh|bash|zsh|fish|sudo)/i.test(c)) {
+    return { dangerous: true, reason: '从网络拉脚本直接 pipe 到 shell 执行' }
+  }
+  // dd if= → 设备写入（毁盘）
+  if (/\bdd\b[^|\n]*\b(of=\/dev\/|if=\/dev\/[sh]d)/i.test(c)) {
+    return { dangerous: true, reason: 'dd 直接读写块设备' }
+  }
+  // mkfs / fdisk / parted 格式化
+  if (/\b(mkfs|fdisk|parted|wipefs|blkdiscard)\b/i.test(c)) {
+    return { dangerous: true, reason: '格式化 / 分区表操作' }
+  }
+  // chmod 777 / chown root 危险变更
+  if (/\bchmod\s+(-R\s+)?(777|666|a\+w)\b\s+(\/|~)/i.test(c)) {
+    return { dangerous: true, reason: 'chmod 777 / 全开权限到根目录或家目录' }
+  }
+  // fork bomb
+  if (/:\(\)\s*\{\s*:?\|:?\s*&\s*\}\s*;?\s*:?/.test(c)) {
+    return { dangerous: true, reason: 'fork bomb' }
+  }
+  // shutdown / reboot / halt
+  if (/\b(shutdown|reboot|halt|poweroff|init\s+0|init\s+6)\b/i.test(c)) {
+    return { dangerous: true, reason: '关机 / 重启' }
+  }
+  return { dangerous: false }
+}
+
 // ── Bash ───────────────────────────────────────────────────────
 const BashArgsZ = z.object({
   command: z.string().min(1),
@@ -191,6 +251,27 @@ export const bashTool: ToolDef<BashArgs, BashResult> = {
     const childEnv = { ...process.env, ...envOverride }
     const t0 = Date.now()
     const sessionId = randomUUID()
+
+    // V2 O10 危险命令拦截：env AIEMP_ALLOW_DANGEROUS=1 全局跳过；否则黑名单命中拒绝
+    if (process.env.AIEMP_ALLOW_DANGEROUS !== '1') {
+      const danger = checkDangerousCommand(args.command)
+      if (danger.dangerous) {
+        const errText = `DANGEROUS_COMMAND_BLOCKED: ${danger.reason}。引擎拒绝执行 "${args.command.slice(0, 200)}"。请改用更精确的命令，或调 ask_user 拿到用户授权后再试。或设 env AIEMP_ALLOW_DANGEROUS=1 全局放开（不推荐）。`
+        log.warn('Bash.dangerous_blocked', {
+          cwd,
+          cmd: args.command.slice(0, 200),
+          reason: danger.reason,
+        })
+        return {
+          status: 'failed',
+          stdout: '',
+          stderr: errText,
+          exitCode: 126,
+          truncated: false,
+          durationMs: 0,
+        }
+      }
+    }
 
     // V2 O7 PTY: 用 `script` 包装命令获得伪 tty。
     //   macOS: script -q /dev/null /bin/sh -c '<cmd>'  （需 stdin=/dev/null，否则 script 抱怨）
