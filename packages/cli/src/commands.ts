@@ -33,7 +33,7 @@ function findWebDist(): string | undefined {
 // ──────────────────────────────────────────────────────────────
 export async function cmdInit(): Promise<number> {
   await ensureDirs()
-  let cfg = await loadConfig()
+  const cfg = await loadConfig()
   await saveConfig(cfg)
 
   // 生成 localhost token（如不存在）
@@ -50,10 +50,41 @@ export async function cmdInit(): Promise<number> {
   console.log(`✓ 数据目录: ${dataDir()}`)
   console.log(`✓ 配置文件: ${join(dataDir(), 'config.toml')}`)
   console.log('')
+
+  // ── 上下文感知的下一步提示 ─────────────────────────────────
+  const envPath = join(process.cwd(), '.env')
+  const envExamplePath = join(process.cwd(), '.env.example')
+  const hasEnv = existsSync(envPath)
+  const hasEnvExample = existsSync(envExamplePath)
+  const envHasLLMKey =
+    hasEnv && /AIEMP_\w+_API_KEY\s*=\s*\S+/m.test(await readFile(envPath, 'utf8').catch(() => ''))
+
+  let employeeCount = 0
+  try {
+    const boot = await bootServices()
+    employeeCount = boot.services.repos.employees.list().length
+    boot.close()
+  } catch {
+    /* DB 未就绪也无所谓，提示按缺省走 */
+  }
+
   console.log('下一步:')
-  console.log(`  ai-emp keychain set <name>   # 写入 LLM/TG 凭证`)
-  console.log(`  ai-emp serve                  # 启动服务`)
-  void cfg
+  const steps: string[] = []
+  if (!hasEnv) {
+    if (hasEnvExample) {
+      steps.push(`cp .env.example .env`)
+      steps.push(`# 编辑 .env 填 LLM key，如 AIEMP_ANTHROPIC_API_KEY=sk-ant-...`)
+    } else {
+      steps.push(`# 在仓库根创建 .env，配 LLM key（参考 .env.example）`)
+    }
+  } else if (!envHasLLMKey) {
+    steps.push(`# 编辑 .env 填 LLM key，如 AIEMP_ANTHROPIC_API_KEY=sk-ant-...`)
+  }
+  if (employeeCount === 0) steps.push(`./ai-emp seed     # 导入 3 项目 + 5 员工 + 8 技能样板`)
+  steps.push(`./ai-emp serve     # 启动服务`)
+  for (const s of steps) console.log(`  ${s}`)
+  console.log('')
+  console.log(`生产路径（secret 不落 .env）：./ai-emp keychain set <name> <secret>`)
   return 0
 }
 
