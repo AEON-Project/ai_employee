@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`0d45d1a` feat(tools): V1.1 简化为纯 Bash 透传（删 Read/Write/Edit/Glob/Grep），LLM 用命令行自由完成任务
+> 最近：`ee728f8` revert(runtime): 拆 V1.3 emit_deliverable 对账（借鉴 OpenClaw），员工提交后由用户验收鉴别真假
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
