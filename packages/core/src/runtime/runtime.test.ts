@@ -576,6 +576,185 @@ describe('executeRequirement', () => {
     expect(req.status).toBe('待验收')
   })
 
+  test('V1.3: Bash exitCode != 0 时 path 不被收集 → emit_deliverable 被拒（防 LLM 跑错命令也算改过）', async () => {
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_deliverable',
+          args: {
+            summary: '改动 SomeRequest.java',
+            contentText: '改了 SomeRequest.java',
+          },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    const thread = repos.threads.findByRequirement(reqId)!
+    // Bash 命令含 path，但 exitCode=1（如 sed 找不到文件）
+    repos.messages.append({
+      threadId: thread.id,
+      role: 'assistant',
+      type: 'tool_call',
+      content: {
+        type: 'tool_call',
+        name: 'Bash',
+        callId: 'c1',
+        args: { command: `sed -i '' 's/X/Y/g' /no/such/SomeRequest.java` },
+      },
+    })
+    repos.messages.append({
+      threadId: thread.id,
+      role: 'tool',
+      type: 'tool_result',
+      content: {
+        type: 'tool_result',
+        callId: 'c1',
+        ok: true, // 注意：tool 本身没抛错（ok=true），但内层 exitCode=1
+        value: {
+          exitCode: 1,
+          stdout: '',
+          stderr: 'No such file',
+          durationMs: 50,
+          truncated: false,
+        },
+      },
+    })
+    await executeRequirement(reqId, services)
+    // claimed path 没有任何成功 Bash 命令承接 → 应被拒，不进待验收
+    expect(repos.requirements.findById(reqId)!.status).not.toBe('待验收')
+    const msgs = repos.messages.listByThread(thread.id)
+    const blocked = msgs.find(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes('emit_deliverable 已阻止'),
+    )
+    expect(blocked).toBeDefined()
+  })
+
+  test('V1.3: Bash 命令 zsh 解析失败（unmatched quote）→ exitCode=1 → path 不算改过', async () => {
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_deliverable',
+          args: {
+            summary: '已修改 Foo.java',
+            contentText: '改了 Foo.java',
+          },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    const thread = repos.threads.findByRequirement(reqId)!
+    // LLM 写出了 JSON escape 错误的命令（结尾多了一个引号），实际 cmd 含 Foo.java 但 shell 解析失败
+    repos.messages.append({
+      threadId: thread.id,
+      role: 'assistant',
+      type: 'tool_call',
+      content: {
+        type: 'tool_call',
+        name: 'Bash',
+        callId: 'c1',
+        args: { command: `find /path -name "Foo.java""` },
+      },
+    })
+    repos.messages.append({
+      threadId: thread.id,
+      role: 'tool',
+      type: 'tool_result',
+      content: {
+        type: 'tool_result',
+        callId: 'c1',
+        ok: true,
+        value: {
+          exitCode: 1,
+          stdout: '',
+          stderr: 'zsh:1: unmatched "',
+          durationMs: 100,
+          truncated: false,
+        },
+      },
+    })
+    await executeRequirement(reqId, services)
+    expect(repos.requirements.findById(reqId)!.status).not.toBe('待验收')
+  })
+
+  test('V1.3: 同一 path 既出现在失败命令也出现在成功命令 → 收集放行（LLM 重试成功）', async () => {
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_deliverable',
+          args: { summary: '改动 X.java', contentText: '已改 X.java' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    const thread = repos.threads.findByRequirement(reqId)!
+    // 第 1 次失败
+    repos.messages.append({
+      threadId: thread.id,
+      role: 'assistant',
+      type: 'tool_call',
+      content: {
+        type: 'tool_call',
+        name: 'Bash',
+        callId: 'c1',
+        args: { command: `sed -i '' 's/a/b/' /wrong/X.java` },
+      },
+    })
+    repos.messages.append({
+      threadId: thread.id,
+      role: 'tool',
+      type: 'tool_result',
+      content: {
+        type: 'tool_result',
+        callId: 'c1',
+        ok: true,
+        value: {
+          exitCode: 1,
+          stdout: '',
+          stderr: 'No such file',
+          durationMs: 50,
+          truncated: false,
+        },
+      },
+    })
+    // 第 2 次成功（不同绝对路径，但同 basename X.java）
+    repos.messages.append({
+      threadId: thread.id,
+      role: 'assistant',
+      type: 'tool_call',
+      content: {
+        type: 'tool_call',
+        name: 'Bash',
+        callId: 'c2',
+        args: { command: `sed -i '' 's/a/b/' /correct/X.java` },
+      },
+    })
+    repos.messages.append({
+      threadId: thread.id,
+      role: 'tool',
+      type: 'tool_result',
+      content: {
+        type: 'tool_result',
+        callId: 'c2',
+        ok: true,
+        value: { exitCode: 0, stdout: '', stderr: '', durationMs: 30, truncated: false },
+      },
+    })
+    await executeRequirement(reqId, services)
+    expect(repos.requirements.findById(reqId)!.status).toBe('待验收')
+  })
+
   test('V1.3 (Bash 透传版): 声称的文件出现在成功的 Bash 命令里 → 允许 emit_deliverable', async () => {
     const { services, repos, reqId, empId } = setup([
       [
