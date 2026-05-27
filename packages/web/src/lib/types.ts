@@ -62,6 +62,8 @@ export interface Skill {
 export interface ThreadResponse {
   thread: { id: string; requirementId: string; createdAt: string }
   messages: Message[]
+  /** 分页模式下存在：是否还有更早的历史 */
+  hasMore?: boolean
 }
 
 export interface Message {

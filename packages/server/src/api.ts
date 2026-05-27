@@ -327,9 +327,27 @@ export function mountApi(app: Hono, deps: ServerDeps) {
   })
 
   // ── thread / messages（只读，给 UI 渲染思维链）────────────
+  // 查询模式（互斥）：
+  //   ① ?limit=N[&beforeSeq=X]  → 分页拉历史，返回最新 N 条（seq 倒序）+ hasMore
+  //   ② ?sinceSeq=Y             → 增量，返回 seq>Y 的全部（seq 正序）
+  //   ③ 无 query                → 全量（seq 正序）—— 兼容老调用方
   api.get('/requirements/:id/thread', (c) => {
     const thread = repos.threads.findByRequirement(c.req.param('id'))
     if (!thread) return c.json({ error: 'not_found' }, 404)
+    const limitRaw = c.req.query('limit')
+    if (limitRaw !== undefined) {
+      const limit = Math.max(1, Math.min(200, parseInt(limitRaw, 10) || 50))
+      const beforeRaw = c.req.query('beforeSeq')
+      const beforeSeq =
+        beforeRaw !== undefined && Number.isFinite(parseInt(beforeRaw, 10))
+          ? parseInt(beforeRaw, 10)
+          : undefined
+      const { rows, hasMore } = repos.messages.pageByThread(thread.id, {
+        beforeSeq,
+        limit,
+      })
+      return c.json({ thread, messages: rows, hasMore })
+    }
     const sinceSeq = parseInt(c.req.query('sinceSeq') ?? '-1', 10)
     const messages = repos.messages.listByThread(thread.id, {
       sinceSeq: sinceSeq >= 0 ? sinceSeq : undefined,

@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, wsConnect } from '../lib/api'
 import type { Clarification, Message, Requirement, ThreadResponse } from '../lib/types'
 import { StatusBadge } from '../components/StatusBadge'
 
 export function RequirementDetailPage({ reqId }: { reqId: string }) {
   const [req, setReq] = useState<Requirement | null>(null)
-  const [thread, setThread] = useState<ThreadResponse | null>(null)
   const [clarifications, setClarifications] = useState<Clarification[]>([])
   const [tab, setTab] = useState<'thread' | 'plan'>('thread')
+  // bump 让 ThreadView 内部在 WS 事件 / 操作完成时重新拉最新一页
+  const [threadRefreshTick, setThreadRefreshTick] = useState(0)
 
   async function refreshAll() {
     const [r, c] = await Promise.all([
@@ -16,12 +17,7 @@ export function RequirementDetailPage({ reqId }: { reqId: string }) {
     ])
     setReq(r)
     setClarifications(c)
-    try {
-      const t = await api.get<ThreadResponse>(`/api/requirements/${reqId}/thread`)
-      setThread(t)
-    } catch {
-      setThread(null)
-    }
+    setThreadRefreshTick((n) => n + 1)
   }
 
   useEffect(() => {
@@ -69,7 +65,7 @@ export function RequirementDetailPage({ reqId }: { reqId: string }) {
           </TabBtn>
         </div>
         {tab === 'thread' ? (
-          <ThreadView messages={thread?.messages ?? []} />
+          <ThreadView reqId={reqId} refreshTick={threadRefreshTick} />
         ) : (
           <PlanView req={req} />
         )}
@@ -238,15 +234,106 @@ function ClarificationCard({ clar, onAnswered }: { clar: Clarification; onAnswer
   )
 }
 
-function ThreadView({ messages }: { messages: Message[] }) {
-  if (messages.length === 0) return <p className="text-sm text-muted">无消息</p>
+const THREAD_PAGE_SIZE = 50
+
+/**
+ * 思维链：seq 倒序展示（最新在顶），向下滚动到底部触发加载更早历史。
+ *   - refreshTick 变化：重拉最新一页，覆盖头部（合并并去重已加载的更早历史）
+ *   - sentinel + IntersectionObserver：滚到底部 200px 内 → loadMore
+ */
+function ThreadView({ reqId, refreshTick }: { reqId: string; refreshTick: number }) {
+  const [messages, setMessages] = useState<Message[]>([])
+  const [hasMore, setHasMore] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  // 用 ref 持有当前 messages，避免 loadMore 闭包过期
+  const messagesRef = useRef<Message[]>([])
+  messagesRef.current = messages
+
+  // 拉最新一页，合并已加载的更早消息（按 id 去重，保持 seq desc 顺序）
+  const loadLatest = useCallback(async () => {
+    try {
+      setError(null)
+      const r = await api.get<ThreadResponse>(
+        `/api/requirements/${reqId}/thread?limit=${THREAD_PAGE_SIZE}`,
+      )
+      const latest = r.messages // seq desc
+      const minLatestSeq = latest.length > 0 ? latest[latest.length - 1]!.seq : Infinity
+      const older = messagesRef.current.filter((m) => m.seq < minLatestSeq)
+      setMessages([...latest, ...older])
+      // 只在初次加载时设置 hasMore；后续以 older.length>0 || r.hasMore 推断
+      setHasMore((prev) => (older.length > 0 ? prev : (r.hasMore ?? false)))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [reqId])
+
+  const loadMore = useCallback(async () => {
+    if (loading || !hasMore) return
+    const cur = messagesRef.current
+    if (cur.length === 0) return
+    const earliestSeq = cur[cur.length - 1]!.seq
+    setLoading(true)
+    try {
+      const r = await api.get<ThreadResponse>(
+        `/api/requirements/${reqId}/thread?limit=${THREAD_PAGE_SIZE}&beforeSeq=${earliestSeq}`,
+      )
+      setMessages((prev) => [...prev, ...r.messages])
+      setHasMore(r.hasMore ?? false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [reqId, loading, hasMore])
+
+  // refreshTick 变化（初次挂载 / WS 事件 / 操作后）→ 拉最新一页
+  useEffect(() => {
+    void loadLatest()
+  }, [loadLatest, refreshTick])
+
+  // sentinel 进入视口 → loadMore
+  useEffect(() => {
+    const node = sentinelRef.current
+    const root = containerRef.current
+    if (!node || !root) return
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void loadMore()
+      },
+      { root, rootMargin: '200px 0px' },
+    )
+    io.observe(node)
+    return () => io.disconnect()
+  }, [loadMore])
+
+  if (messages.length === 0 && !error) return <p className="text-sm text-muted">无消息</p>
+
   return (
-    <div className="space-y-2 max-h-[600px] overflow-auto">
+    <div ref={containerRef} className="space-y-2 max-h-[600px] overflow-auto">
+      {error && <p className="text-xs text-danger">加载失败：{error}</p>}
       {messages.map((m) => (
         <MessageItem key={m.id} m={m} />
       ))}
+      {hasMore ? (
+        <div ref={sentinelRef} className="text-xs text-muted text-center py-2">
+          {loading ? '加载中...' : '向下滚动加载更早历史'}
+        </div>
+      ) : (
+        messages.length >= THREAD_PAGE_SIZE && (
+          <p className="text-xs text-muted text-center py-2">— 已到最早 —</p>
+        )
+      )}
     </div>
   )
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleTimeString('zh-CN', { hour12: false })
 }
 
 function MessageItem({ m }: { m: Message }) {
@@ -281,7 +368,7 @@ function MessageItem({ m }: { m: Message }) {
       <span className="text-base">{icon}</span>
       <div className="flex-1">
         <div className="text-xs text-muted">
-          #{m.seq} · {m.role}/{m.type}
+          #{m.seq} · {m.role}/{m.type} · {formatTime(m.createdAt)}
         </div>
         <pre className="whitespace-pre-wrap font-sans">{text}</pre>
       </div>

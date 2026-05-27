@@ -10,7 +10,7 @@
  *   - 复杂查询（带 join / 排序）暴露为方法；简单 CRUD 用 base 模板
  */
 
-import { and, asc, desc, eq, max } from 'drizzle-orm'
+import { and, asc, desc, eq, lt, max } from 'drizzle-orm'
 import type {
   BudgetCap,
   BudgetUsed,
@@ -439,6 +439,31 @@ export class MessagesRepo {
       .limit(n)
       .all()
     return rows.reverse()
+  }
+
+  /**
+   * 按 seq 倒序分页（UI 思维链滚动加载历史用）。
+   *   - 无 beforeSeq：最新 limit 条
+   *   - 有 beforeSeq：seq < beforeSeq 的最新 limit 条
+   *   - hasMore 通过查询 limit+1 条判断
+   */
+  pageByThread(
+    threadId: string,
+    opts: { beforeSeq?: number; limit: number },
+  ): { rows: (typeof messages.$inferSelect)[]; hasMore: boolean } {
+    const where =
+      opts.beforeSeq !== undefined
+        ? and(eq(messages.threadId, threadId), lt(messages.seq, opts.beforeSeq))
+        : eq(messages.threadId, threadId)
+    const rows = this.db
+      .select()
+      .from(messages)
+      .where(where)
+      .orderBy(desc(messages.seq))
+      .limit(opts.limit + 1)
+      .all()
+    const hasMore = rows.length > opts.limit
+    return { rows: hasMore ? rows.slice(0, opts.limit) : rows, hasMore }
   }
 }
 

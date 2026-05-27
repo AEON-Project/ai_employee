@@ -152,6 +152,44 @@ describe('Threads + Messages', () => {
     const since = repos.messages.listByThread(tid, { sinceSeq: 2 })
     expect(since.map((m) => m.seq)).toEqual([3, 4])
   })
+
+  test('pageByThread：seq 倒序分页 + hasMore + beforeSeq', () => {
+    const { repos } = env
+    const rid = repos.requirements.create({
+      title: 'T',
+      description: 'D',
+      budgetCap: DEFAULT_BUDGET_CAP,
+    })
+    const tid = repos.threads.createForRequirement(rid)
+    for (let i = 0; i < 7; i++) {
+      repos.messages.append({
+        threadId: tid,
+        role: 'assistant',
+        type: 'text',
+        content: { type: 'text', text: `c${i}` },
+      })
+    }
+
+    // 第一页：最新 3 条 seq desc，还有更早 → hasMore=true
+    const p1 = repos.messages.pageByThread(tid, { limit: 3 })
+    expect(p1.rows.map((m) => m.seq)).toEqual([6, 5, 4])
+    expect(p1.hasMore).toBe(true)
+
+    // 第二页：beforeSeq=4，最新 3 条 (3,2,1) → 还有 seq=0 → hasMore=true
+    const p2 = repos.messages.pageByThread(tid, { limit: 3, beforeSeq: 4 })
+    expect(p2.rows.map((m) => m.seq)).toEqual([3, 2, 1])
+    expect(p2.hasMore).toBe(true)
+
+    // 第三页：beforeSeq=1，仅剩 seq=0 → hasMore=false
+    const p3 = repos.messages.pageByThread(tid, { limit: 3, beforeSeq: 1 })
+    expect(p3.rows.map((m) => m.seq)).toEqual([0])
+    expect(p3.hasMore).toBe(false)
+
+    // 边界：beforeSeq=0 → 无更早 → 空 + hasMore=false
+    const p4 = repos.messages.pageByThread(tid, { limit: 3, beforeSeq: 0 })
+    expect(p4.rows).toHaveLength(0)
+    expect(p4.hasMore).toBe(false)
+  })
 })
 
 describe('ClarificationsRepo', () => {
