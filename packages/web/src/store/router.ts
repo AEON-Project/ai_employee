@@ -7,6 +7,7 @@
  *   #/employees              Employees list
  *   #/employees/:id          Employee detail
  *   #/skills                 Skills management
+ *   #/requirements           Requirements list (按状态筛选)
  *   #/new                    New requirement
  */
 
@@ -20,6 +21,7 @@ export type Route =
   | { name: 'employees' }
   | { name: 'employee'; id: string }
   | { name: 'skills' }
+  | { name: 'requirements' }
   | { name: 'new' }
   | { name: 'unknown' }
 
@@ -29,6 +31,7 @@ export function parseHash(hash: string): Route {
   if (h === 'projects') return { name: 'projects' }
   if (h === 'employees') return { name: 'employees' }
   if (h === 'skills') return { name: 'skills' }
+  if (h === 'requirements') return { name: 'requirements' }
   if (h === 'new') return { name: 'new' }
   const m1 = /^req\/([\w-]+)$/.exec(h)
   if (m1) return { name: 'req', id: m1[1]! }

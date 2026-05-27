@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from '../lib/api'
-import type { Project } from '../lib/types'
+import { api, wsConnect } from '../lib/api'
+import type { Employee, Project, Requirement } from '../lib/types'
+import { StatusBadge } from '../components/StatusBadge'
 import { navigate } from '../store/router'
 
-type Tab = 'basic' | 'conventions' | 'knowledge'
+type Tab = 'basic' | 'requirements' | 'conventions' | 'knowledge'
 
 interface Convention {
   id: string
@@ -72,6 +73,9 @@ export function ProjectDetailPage({ id }: { id: string }) {
         <TabBtn active={tab === 'basic'} onClick={() => setTab('basic')}>
           介绍
         </TabBtn>
+        <TabBtn active={tab === 'requirements'} onClick={() => setTab('requirements')}>
+          需求
+        </TabBtn>
         <TabBtn active={tab === 'conventions'} onClick={() => setTab('conventions')}>
           规范
         </TabBtn>
@@ -81,9 +85,98 @@ export function ProjectDetailPage({ id }: { id: string }) {
       </nav>
 
       {tab === 'basic' && <BasicTab proj={proj} onSaved={refresh} />}
+      {tab === 'requirements' && <RequirementsTab projectId={proj.id} />}
       {tab === 'conventions' && <ConventionsTab projectId={proj.id} />}
       {tab === 'knowledge' && <KnowledgeTab projectId={proj.id} />}
     </div>
+  )
+}
+
+function RequirementsTab({ projectId }: { projectId: string }) {
+  const [reqs, setReqs] = useState<Requirement[]>([])
+  const [employees, setEmployees] = useState<Record<string, Employee>>({})
+
+  const refresh = useCallback(async () => {
+    const [r, es] = await Promise.all([
+      api.get<Requirement[]>(`/api/requirements?projectId=${projectId}`),
+      api.get<Employee[]>('/api/employees'),
+    ])
+    setReqs(r)
+    setEmployees(Object.fromEntries(es.map((e) => [e.id, e])))
+  }, [projectId])
+
+  useEffect(() => {
+    refresh()
+    const ws = wsConnect('/ws/global', (msg) => {
+      if (msg.kind === 'event' && msg.name.startsWith('requirement.')) {
+        void refresh()
+      }
+    })
+    return () => ws.close()
+  }, [refresh])
+
+  return (
+    <section className="card overflow-x-auto">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold">本项目需求 ({reqs.length})</h3>
+        <a
+          href="#/new"
+          className="btn-primary text-sm"
+          onClick={(e) => {
+            e.preventDefault()
+            navigate('/new')
+          }}
+        >
+          + 新建需求
+        </a>
+      </div>
+      {reqs.length === 0 ? (
+        <p className="text-sm text-muted">暂无需求</p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead className="text-xs text-muted text-left">
+            <tr>
+              <th className="py-2 pr-3">标题</th>
+              <th className="py-2 pr-3">员工</th>
+              <th className="py-2 pr-3">状态</th>
+              <th className="py-2 pr-3">优先级</th>
+              <th className="py-2 pr-3">创建</th>
+            </tr>
+          </thead>
+          <tbody>
+            {reqs.map((r) => {
+              const emp = r.assigneeId ? employees[r.assigneeId] : null
+              return (
+                <tr
+                  key={r.id}
+                  className="border-t border-border hover:bg-slate-50 cursor-pointer"
+                  onClick={() => navigate(`/req/${r.id}`)}
+                >
+                  <td className="py-2 pr-3 font-medium truncate max-w-[280px]">{r.title}</td>
+                  <td className="py-2 pr-3 text-muted">
+                    {emp ? `${emp.name} · ${emp.role}` : '—'}
+                  </td>
+                  <td className="py-2 pr-3">
+                    <StatusBadge status={r.status} />
+                  </td>
+                  <td className="py-2 pr-3">
+                    <span className="tag">{r.priority}</span>
+                  </td>
+                  <td className="py-2 pr-3 text-muted text-xs">
+                    {new Date(r.createdAt).toLocaleString('zh-CN', {
+                      month: '2-digit',
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
   )
 }
 

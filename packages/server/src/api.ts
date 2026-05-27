@@ -190,14 +190,22 @@ export function mountApi(app: Hono, deps: ServerDeps) {
   api.get('/employees/:id/skills', (c) => c.json(repos.skills.listForEmployee(c.req.param('id'))))
 
   // ── requirements ─────────────────────────────────────────
+  // 查询参数：
+  //   status      — 单一状态筛选（如「进行中」）
+  //   projectId   — 项目内需求
+  //   all=true    — 显式包含已完成/驳回/取消（默认仅活跃）
+  // 行为：传 status / projectId / all=true 任一时返回全量后过滤；都没传时返回活跃
   api.get('/requirements', (c) => {
     const status = c.req.query('status')
-    if (status) {
-      // 走 listByStatus
-      const rows = repos.requirements.listByStatus(status as never)
-      return c.json(rows)
-    }
-    return c.json(repos.requirements.listActive())
+    const projectId = c.req.query('projectId')
+    const all = c.req.query('all') === 'true'
+    let rows = status
+      ? repos.requirements.listByStatus(status as never)
+      : all || projectId
+        ? repos.requirements.listAll()
+        : repos.requirements.listActive()
+    if (projectId) rows = rows.filter((r) => r.projectId === projectId)
+    return c.json(rows)
   })
   api.post('/requirements', async (c) => {
     const body = await c.req.json()

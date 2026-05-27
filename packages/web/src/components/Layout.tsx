@@ -17,6 +17,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </a>
           <nav className="flex gap-4 text-sm">
             <NavLink to="/" label="仪表" />
+            <NavLink to="/requirements" label="需求" />
             <NavLink to="/projects" label="项目" />
             <NavLink to="/employees" label="员工" />
             <NavLink to="/skills" label="技能" />

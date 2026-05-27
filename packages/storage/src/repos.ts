@@ -315,6 +315,19 @@ export class RequirementsRepo {
       .all()
   }
 
+  listAll() {
+    return this.db.select().from(requirements).orderBy(desc(requirements.createdAt)).all()
+  }
+
+  listByProject(projectId: string) {
+    return this.db
+      .select()
+      .from(requirements)
+      .where(eq(requirements.projectId, projectId))
+      .orderBy(desc(requirements.createdAt))
+      .all()
+  }
+
   listActive() {
     // status NOT IN ('已完成','已驳回','已取消')
     return this.db

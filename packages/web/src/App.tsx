@@ -6,6 +6,7 @@ import { ProjectDetailPage } from './pages/ProjectDetail'
 import { EmployeesPage } from './pages/Employees'
 import { EmployeeDetailPage } from './pages/EmployeeDetail'
 import { SkillsPage } from './pages/Skills'
+import { RequirementsPage } from './pages/Requirements'
 import { NewRequirementPage } from './pages/NewRequirement'
 import { RequirementDetailPage } from './pages/RequirementDetail'
 
@@ -28,6 +29,8 @@ function render(route: ReturnType<typeof useRoute>): React.ReactNode {
       return <EmployeeDetailPage id={route.id} />
     case 'skills':
       return <SkillsPage />
+    case 'requirements':
+      return <RequirementsPage />
     case 'new':
       return <NewRequirementPage />
     case 'req':
