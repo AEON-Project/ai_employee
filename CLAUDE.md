@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`fe47ebd` feat(web): 「待验收」自动显示 Git Diff（projects.workdir + git-diff API + UI panel）
+> 最近：`3a680ab` feat(web): Git Diff Panel 用 diff2html 做 GitHub Dark 风格 split view
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
