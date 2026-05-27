@@ -43,7 +43,7 @@ cp .env.example .env
 
 # 5. 首次引导 + 导入样板员工
 ./ai-emp init
-./ai-emp seed     # 3 项目 + 5 员工 + 8 技能；样板员工的 modelKeyRef
+./ai-emp seed --reset  # 3 项目 + 5 员工 + 8 技能；样板员工的 modelKeyRef
                   # 默认是 env://AIEMP_ANTHROPIC_API_KEY，配完 .env 直接能用
 
 # 6. 启动服务
@@ -156,10 +156,10 @@ ai-emp/
 
 | 文档 | 内容 | 谁该看 |
 |---|---|---|
-| [**PRD_V1.md**](./PRD_V1.md) | 完整产品需求：四大实体 / 记忆模型 / 流程 / 验收 / α / β 范围 | **产品** / 决策者 |
-| [**ARCHITECTURE.md**](./ARCHITECTURE.md) | 技术架构：模块边界 / 数据库 schema / Runtime 状态机 / 事件总线 / API 边界 | **工程** / 二次开发 |
-| [**ALPHA_TASKS.md**](./ALPHA_TASKS.md) | α + β 工单清单、当前进度状态、后续路线 | 跟进开发进度 |
-| [**SPIKE_RESULTS.md**](./SPIKE_RESULTS.md) | W0 技术 spike 结果（sqlite-vec / transformers.js / LLM SDK 兼容性） | 排错 / 平台移植 |
+| [**PRD_V1.md**](./docs/product/PRD_V1.md) | 完整产品需求：四大实体 / 记忆模型 / 流程 / 验收 / α / β 范围 | **产品** / 决策者 |
+| [**ARCHITECTURE.md**](./docs/architecture/ARCHITECTURE.md) | 技术架构：模块边界 / 数据库 schema / Runtime 状态机 / 事件总线 / API 边界 | **工程** / 二次开发 |
+| [**ALPHA_TASKS.md**](./docs/progress/ALPHA_TASKS.md) | α + β 工单清单、当前进度状态、后续路线 | 跟进开发进度 |
+| [**SPIKE_RESULTS.md**](./docs/architecture/SPIKE_RESULTS.md) | W0 技术 spike 结果（sqlite-vec / transformers.js / LLM SDK 兼容性） | 排错 / 平台移植 |
 | [**GETTING_STARTED.md**](./GETTING_STARTED.md) | 从 brew install 到完成首个需求的 quickstart + 排错表 | **新用户** |
 
 ---
@@ -174,7 +174,7 @@ ai-emp/
 - **单二进制 63MB**（`bun build --compile`，macOS arm64 已验证）
 - 仓库：[AEON-Project/ai_employee](https://github.com/AEON-Project/ai_employee)
 
-详细状态见 [ALPHA_TASKS.md §0](./ALPHA_TASKS.md#0-当前开发状态最近更新2026-05-26)。
+详细状态见 [ALPHA_TASKS.md §0](./docs/progress/ALPHA_TASKS.md#0-当前开发状态最近更新2026-05-26)。
 
 ---
 
@@ -193,7 +193,7 @@ ai-emp/
 | 前端 | React + Vite + Tailwind + Zustand（shadcn 风格自写组件） |
 | Schema | **Zod**（运行时校验 + 类型推导） |
 
-完整选型理由 + 选型时的 trade-off 见 [ARCHITECTURE.md §3](./ARCHITECTURE.md#3-技术栈)。
+完整选型理由 + 选型时的 trade-off 见 [ARCHITECTURE.md §3](./docs/architecture/ARCHITECTURE.md#3-技术栈)。
 
 ---
 
@@ -204,7 +204,7 @@ ai-emp/
 - **Linux x64**：⚠️ 未验证；sqlite-vec / sharp / keychain (`secret-tool`) 选型都支持
 - **Windows**：❌ 暂不支持（keychain CLI 还未实现 Credential Manager 路径）
 
-详细见 [SPIKE_RESULTS.md](./SPIKE_RESULTS.md) 的工程注意点。
+详细见 [SPIKE_RESULTS.md](./docs/architecture/SPIKE_RESULTS.md) 的工程注意点。
 
 ---
 
@@ -246,4 +246,4 @@ bun test packages/bridge-tg
 - **β 反馈循环**：根据真实使用调整 PromptComposer / 复杂度阈值 / Importance Scoring 权重
 - **V1.1+**（PRD §11 标注）：Replay 批量评分 / 跨项目 Brain / Trigger 事件驱动 / Integration 生态 / Git/PR/CI 集成 / 多模态
 
-完整路线见 [ALPHA_TASKS.md §13](./ALPHA_TASKS.md#13-后续路线)。
+完整路线见 [ALPHA_TASKS.md §13](./docs/progress/ALPHA_TASKS.md#13-后续路线)。

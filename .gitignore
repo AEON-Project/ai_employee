@@ -3,6 +3,7 @@ node_modules
 .idea
 .vscode
 .claude
+.playwright-mcp
 
 # build / cache
 dist
