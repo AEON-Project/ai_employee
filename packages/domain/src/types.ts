@@ -161,7 +161,7 @@ export interface SkillExample {
 export const MEMORY_SCOPES = ['project', 'employee'] as const
 export type MemoryScope = (typeof MEMORY_SCOPES)[number]
 
-export const MEMORY_KINDS = ['fact', 'pitfall', 'lesson'] as const
+export const MEMORY_KINDS = ['fact', 'pitfall', 'lesson', 'skill'] as const
 export type MemoryKind = (typeof MEMORY_KINDS)[number]
 
 export const USER_FEEDBACK_VALUES = ['none', 'positive', 'negative'] as const

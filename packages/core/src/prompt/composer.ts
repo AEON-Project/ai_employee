@@ -45,6 +45,7 @@ export interface ComposedPrompt {
     recalledFacts: RecallHit[]
     recalledPitfalls: RecallHit[]
     recalledLessons: RecallHit[]
+    recalledSkills: RecallHit[]
     requiredConventionCount: number
     recommendedConventionCount: number
   }
@@ -103,10 +104,11 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
   //   后续 RAG / plan / chat 都按需求变化，不能进 cache
   const cacheBreakpointBytes = parts.reduce((sum, p) => sum + p.length, 0) + parts.length * 2 // 加上 \n\n 分隔
 
-  // ③ RAG：facts / pitfalls / lessons
+  // ③ RAG：facts / pitfalls / lessons / skills
   let facts: RecallHit[] = []
   let pitfalls: RecallHit[] = []
   let lessons: RecallHit[] = []
+  let skills_recall: RecallHit[] = []
   if (input.memory) {
     const k = input.recallK ?? DEFAULT_RECALL_K
     const query = `${req.title}\n${req.description}`
@@ -133,6 +135,14 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
       query,
       k,
     })
+    // V2 O1 Skills 自演化：注入员工自己沉淀的可复用做法套路
+    skills_recall = await recall(input.memory, {
+      scope: 'employee',
+      scopeId: emp.id,
+      kinds: ['skill'],
+      query,
+      k,
+    })
   }
   if (facts.length > 0) {
     parts.push(
@@ -146,6 +156,16 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
   }
   if (lessons.length > 0) {
     parts.push(`## 个人教训（lessons）\n${lessons.map((l) => `- ${l.content}`).join('\n')}`)
+  }
+  if (skills_recall.length > 0) {
+    parts.push(
+      [
+        '## 你过往沉淀的可复用 Skills（按相关性 Top-K）',
+        '⭐ 若以下某个 skill 与当前任务套路匹配，**优先按其步骤执行**，不要从零摸索。',
+        '',
+        skills_recall.map((s) => s.content).join('\n\n---\n\n'),
+      ].join('\n'),
+    )
   }
 
   // ④ Plan / 当前步骤
@@ -188,6 +208,9 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
       '  - `advance_step`：完成 plan 中一步后调用',
       '  - `update_plan`：当需要调整计划时调用',
       '  - `emit_deliverable`：交付最终产物，进入 待验收 状态',
+      '  - `emit_skill`：完成任务后，若识别出"这是一类可复用的解决套路"，沉淀到长期记忆；',
+      '    未来同员工接到相似需求时引擎会自动注入。例：「Java enum 新增值」「修复 React useEffect 死循环」。',
+      '    一次性具体修改（"把 main.ts 第 23 行的 foo 改成 bar"）不要 emit_skill。可选，不强制。',
       '  - `ask_user`：以下 5 种场景**必须**主动暂停发问（带正确 trigger_reason）：',
       '    · `decision_split`：方案 A vs B 不可自行决断',
       '    · `missing_info`：关键事实/参数缺失，无法继续',
@@ -258,6 +281,7 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
       recalledFacts: facts,
       recalledPitfalls: pitfalls,
       recalledLessons: lessons,
+      recalledSkills: skills_recall,
       requiredConventionCount: requiredCount,
       recommendedConventionCount: recommendedCount,
     },

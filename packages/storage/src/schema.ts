@@ -281,7 +281,7 @@ export const memoryItems = sqliteTable(
     id: text('id').primaryKey(),
     scope: text('scope', { enum: ['project', 'employee'] }).notNull(),
     scopeId: text('scope_id').notNull(),
-    kind: text('kind', { enum: ['fact', 'pitfall', 'lesson'] }).notNull(),
+    kind: text('kind', { enum: ['fact', 'pitfall', 'lesson', 'skill'] }).notNull(),
     content: text('content').notNull(),
     sourceRequirementId: text('source_requirement_id').references(() => requirements.id, {
       onDelete: 'set null',

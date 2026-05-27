@@ -45,6 +45,7 @@ const mockTools: RuntimeToolDef[] = [
   { name: 'advance_step', kind: 'system', description: '', inputSchema: passThroughSchema },
   { name: 'update_plan', kind: 'system', description: '', inputSchema: passThroughSchema },
   { name: 'emit_deliverable', kind: 'system', description: '', inputSchema: passThroughSchema },
+  { name: 'emit_skill', kind: 'system', description: '', inputSchema: passThroughSchema },
 ]
 const toolJsonSchema = (_name: string) => ({}) // 形状对 mock 测试不重要
 const mockRegistry = {
@@ -562,6 +563,106 @@ describe('executeRequirement', () => {
         ((m.contentJson as { message?: string }).message ?? '').includes('emit_deliverable 已阻止'),
     )
     expect(blocked).toBeUndefined()
+  })
+
+  test('V2 O1: emit_skill 写入 memory_items(kind=skill, scope=employee) + 思维链可见', async () => {
+    const { services, repos, reqId, empId } = setup([
+      // turn 0: emit_skill
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_skill',
+          args: {
+            name: 'Java 枚举新增值',
+            whenToUse: 'Java enum 类需要新增一个枚举常量并保持兼容时',
+            steps: [
+              'find 项目根 -name "*Enum.java" 定位枚举文件',
+              'cat 看现有 enum 结构（构造参数、注解）',
+              'sed 在 ; 之前插入新值',
+              'mvn compile 验证编译通过',
+            ],
+            triggers: ['enum', 'java', '枚举', '新增'],
+          },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+        { type: 'usage', input: 80, output: 60 },
+      ],
+      // turn 1: emit_deliverable（让流程结束）
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'emit_deliverable',
+          args: { summary: '已完成枚举新增', contentText: '新增 NEW_BANK 枚举' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    const r = await executeRequirement(reqId, services)
+    expect(r.exit).toBe('delivered')
+
+    // 写入了一条 kind='skill' 的 memory_item
+    const skills = repos.memoryItems.list({ scope: 'employee', scopeId: empId, kind: 'skill' })
+    expect(skills.length).toBe(1)
+    expect(skills[0]!.content).toContain('**Skill: Java 枚举新增值**')
+    expect(skills[0]!.content).toContain('何时复用: Java enum 类')
+    expect(skills[0]!.content).toContain('1. find 项目根')
+    expect(skills[0]!.content).toContain('关键词: enum, java, 枚举, 新增')
+    expect(skills[0]!.sourceRequirementId).toBe(reqId)
+
+    // 思维链有一条可见的 sediment text
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    const sedimentMsg = msgs.find((m) => {
+      const text = (m.contentJson as { text?: string }).text ?? ''
+      return text.includes('已沉淀 skill') && text.includes('Java 枚举新增值')
+    })
+    expect(sedimentMsg).toBeDefined()
+  })
+
+  test('V2 O1: emit_skill 缺必填字段 → 写 system/error，不写入 memory_items，流程继续', async () => {
+    const { services, repos, reqId, empId } = setup([
+      // turn 0: 缺 steps
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_skill',
+          args: { name: '一个 skill', whenToUse: '某场景' /* steps 缺失 */ },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 1: emit_deliverable 兜底
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'emit_deliverable',
+          args: { summary: '收尾', contentText: '...' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    const r = await executeRequirement(reqId, services)
+    expect(r.exit).toBe('delivered')
+
+    // 没有 skill 被写入
+    const skills = repos.memoryItems.list({ scope: 'employee', scopeId: empId, kind: 'skill' })
+    expect(skills.length).toBe(0)
+
+    // 有一条 system/error message
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    const errMsg = msgs.find(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes('emit_skill 已忽略'),
+    )
+    expect(errMsg).toBeDefined()
   })
 
   test('V1.4: LLM 429 错误自动退避重试，不立即 system_pause', async () => {

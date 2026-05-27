@@ -30,6 +30,7 @@ import { BudgetTracker } from './budget.js'
 import { transition } from './state-machine.js'
 import { composeMinimalPrompt } from './prompt-minimal.js'
 import { compose as composeFullPrompt } from '../prompt/composer.js'
+import { reindexSource } from '../memory/memory.js'
 import type { RuntimeServices, RuntimeLLMChunk, RuntimeToolDef } from './services.js'
 
 /** 终止信号：执行循环退出的几种方式 */
@@ -662,6 +663,119 @@ async function dispatch(
         deliverableRef: args.contentRef ?? `inline:${args.summary}`,
       })
       return { kind: 'delivered' }
+    }
+    case 'emit_skill': {
+      // V2 O1 Skills 自演化：把 LLM 总结的"可复用做法套路"沉淀进 memory_items(kind='skill', scope='employee')。
+      // 走 RAG 索引；下次同员工接到相似需求时 composer 自动注入到 system prompt。
+      // 不改变执行状态机，旁路沉淀；continue 让 LLM 紧接着 emit_deliverable 或继续干。
+      const args = call.args as {
+        name?: string
+        whenToUse?: string
+        steps?: unknown
+        triggers?: unknown
+      }
+      const name = typeof args.name === 'string' ? args.name.trim() : ''
+      const whenToUse = typeof args.whenToUse === 'string' ? args.whenToUse.trim() : ''
+      const stepsArr = Array.isArray(args.steps)
+        ? args.steps.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+        : []
+      const triggersArr = Array.isArray(args.triggers)
+        ? args.triggers.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+        : []
+      if (!name || !whenToUse || stepsArr.length === 0) {
+        log.warn('emit_skill.invalid', {
+          reqId,
+          hasName: !!name,
+          hasWhen: !!whenToUse,
+          stepCount: stepsArr.length,
+        })
+        // 写一条 system/error 让 LLM 下一轮看到，但不暂停整体流程
+        repos.messages.append({
+          threadId: thread.id,
+          role: 'system',
+          type: 'error',
+          content: {
+            type: 'error',
+            message: `emit_skill 已忽略：缺少必要字段（name / whenToUse / steps[] 均非空）。可重试或直接跳过此次沉淀。`,
+            fatal: false,
+          },
+        })
+        return {
+          kind: 'continue',
+          newState: {
+            currentStep: ctx.currentStep,
+            historySummary: ctx.historySummary,
+            budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+          },
+        }
+      }
+      // 组装结构化 markdown 写入 memory_items.content
+      // 整段 content 也用作 embedding 输入，关键词自然被向量捕获
+      const triggerLine = triggersArr.length > 0 ? `\n关键词: ${triggersArr.join(', ')}` : ''
+      const stepsBlock = stepsArr.map((s, i) => `${i + 1}. ${s}`).join('\n')
+      const content = [
+        `**Skill: ${name}**`,
+        `何时复用: ${whenToUse}${triggerLine}`,
+        '步骤:',
+        stepsBlock,
+      ].join('\n')
+
+      const skillId = repos.memoryItems.create({
+        scope: 'employee',
+        scopeId: employee.id,
+        kind: 'skill',
+        content,
+        sourceRequirementId: reqId,
+      })
+
+      // 走 RAG 索引（有 memory 服务时才索引；否则 LLM 仍可通过 list/SQL 拿到，但 RAG 命中率为 0）
+      if (services.memory) {
+        try {
+          await reindexSource(
+            {
+              repos,
+              sqlite: services.memory.sqlite,
+              embed: services.memory.embed,
+            },
+            'memory_item',
+            skillId,
+            content,
+          )
+        } catch (err) {
+          log.warn('emit_skill.reindex_failed', { reqId, skillId, err: String(err) })
+        }
+      }
+
+      // 写一条思维链可见的 assistant text，方便用户在 UI 看到员工沉淀了什么
+      repos.messages.append({
+        threadId: thread.id,
+        role: 'assistant',
+        type: 'text',
+        content: {
+          type: 'text',
+          text: `📚 已沉淀 skill「${name}」到长期记忆（员工：${employee.id.slice(0, 8)}）。未来同类需求会自动注入。`,
+        },
+      })
+      bus.emit('memory.persisted', {
+        items: [
+          {
+            id: skillId,
+            scope: 'employee',
+            scopeId: employee.id,
+            kind: 'skill',
+            content,
+          },
+        ],
+      })
+
+      return {
+        kind: 'continue',
+        newState: {
+          currentStep: ctx.currentStep,
+          historySummary: ctx.historySummary,
+          budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+        },
+      }
     }
     default: {
       // 普通 tool —— 走 executor

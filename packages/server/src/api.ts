@@ -465,7 +465,7 @@ export function mountApi(app: Hono, deps: ServerDeps) {
   api.get('/memory/items', (c) => {
     const scope = c.req.query('scope') as 'project' | 'employee' | undefined
     const scopeId = c.req.query('scopeId')
-    const kind = c.req.query('kind') as 'fact' | 'pitfall' | 'lesson' | undefined
+    const kind = c.req.query('kind') as 'fact' | 'pitfall' | 'lesson' | 'skill' | undefined
     if (!scope || !scopeId) return c.json({ error: 'scope and scopeId required' }, 400)
     return c.json(repos.memoryItems.list({ scope, scopeId, kind }))
   })
@@ -475,7 +475,7 @@ export function mountApi(app: Hono, deps: ServerDeps) {
       .object({
         scope: z.enum(['project', 'employee']),
         scopeId: z.string().min(1),
-        kind: z.enum(['fact', 'pitfall', 'lesson']),
+        kind: z.enum(['fact', 'pitfall', 'lesson', 'skill']),
         content: z.string().min(1),
         importanceScore: z.number().min(0).max(1).optional(),
       })

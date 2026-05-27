@@ -197,6 +197,70 @@ export const emitDeliverableTool: ToolDef<EmitDeliverableArgs, never> = {
   },
 }
 
+// ── emit_skill ──────────────────────────────────────────────
+//
+// V2 O1 Skills 自演化（参考 hermes-agent agentskills.io）。
+// LLM 在完成任务后觉得"这套路值得记下来给未来同员工的同类任务用"时主动调用。
+// runtime 写入 memory_items(kind='skill', scope='employee') + 走 RAG 索引；
+// 下次同员工接到相似需求时，composer 按相似度 Top-K 自动注入到 system prompt。
+export const EmitSkillArgsZ = z.object({
+  name: z.string().min(1).max(80),
+  /** 1-2 句话说明何时复用这个 skill */
+  whenToUse: z.string().min(1),
+  /** 多步骤的可复用做法 */
+  steps: z.array(z.string().min(1)).min(1),
+  /** 关键词（供 LLM 自己写，帮 RAG 检索时命中率高） */
+  triggers: z.array(z.string().min(1)).optional(),
+})
+export type EmitSkillArgs = z.infer<typeof EmitSkillArgsZ>
+
+export const emitSkillTool: ToolDef<EmitSkillArgs, never> = {
+  name: 'emit_skill',
+  kind: 'system',
+  description: [
+    '沉淀一个可复用的"做法套路"到当前员工的长期记忆，未来同员工接到相似任务时引擎会自动注入。',
+    '何时调用：',
+    '  - 任务完成后，回顾整个执行过程，识别出"这是一类可复用的解决套路"',
+    '  - 例子："Java 项目添加枚举值"、"修复 React useEffect 死循环"、"诊断 mvn 缺少依赖"',
+    '  - 反例：纯一次性的具体修改（"把 main.ts 第 23 行的 foo 改成 bar"）不要 emit_skill',
+    '推荐在 emit_deliverable 之前调（先沉淀经验，再交付），但不强制顺序。',
+    '若你对当前任务没把握有"套路价值"，不要调；引擎不强制 emit_skill。',
+  ].join('\n'),
+  inputSchema: EmitSkillArgsZ,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      name: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 80,
+        description: '一个简短的 skill 名称，未来在 RAG 里展示。如"Java 枚举新增值"',
+      },
+      whenToUse: {
+        type: 'string',
+        minLength: 1,
+        description: '1-2 句话说明触发场景与适用条件',
+      },
+      steps: {
+        type: 'array',
+        minItems: 1,
+        description: '具体可复用的多步骤做法（每步 1 句话即可，不要塞整段命令）',
+        items: { type: 'string', minLength: 1 },
+      },
+      triggers: {
+        type: 'array',
+        description: '可选：关键词列表，帮未来检索命中（如 ["enum", "java", "枚举"]）',
+        items: { type: 'string', minLength: 1 },
+      },
+    },
+    required: ['name', 'whenToUse', 'steps'],
+    additionalProperties: false,
+  },
+  invoke: async () => {
+    throw new Error('emit_skill must be dispatched by runtime')
+  },
+}
+
 /**
  * 全部系统级 tool 列表，registry 启动时一次注册。
  * 用 `ToolDef[]` 类型存储时各项 I/O 泛型实例化为 unknown — 数组元素只读，安全。
@@ -206,6 +270,7 @@ export const SYSTEM_TOOLS: ToolDef[] = [
   advanceStepTool as ToolDef,
   updatePlanTool as ToolDef,
   emitDeliverableTool as ToolDef,
+  emitSkillTool as ToolDef,
 ]
 
 export const SYSTEM_TOOL_NAMES = new Set(SYSTEM_TOOLS.map((t) => t.name))

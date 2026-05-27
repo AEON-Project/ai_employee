@@ -62,7 +62,7 @@ export type PauseReason = (typeof PAUSE_REASONS)[number]
 export const MEMORY_SCOPES = ['project', 'employee'] as const
 export type MemoryScope = (typeof MEMORY_SCOPES)[number]
 
-export const MEMORY_KINDS = ['fact', 'pitfall', 'lesson'] as const
+export const MEMORY_KINDS = ['fact', 'pitfall', 'lesson', 'skill'] as const
 export type MemoryKind = (typeof MEMORY_KINDS)[number]
 
 /** events 里只引用 MemoryItem 的"轻量引用"，完整结构在 storage 层 */

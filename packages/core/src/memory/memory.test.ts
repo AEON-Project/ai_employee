@@ -123,6 +123,90 @@ describe('reindexSource + recall', () => {
   })
 })
 
+describe('skill kind (V2 O1 Skills 自演化)', () => {
+  test('插入 memory_item(kind=skill, scope=employee) 后能被 recall 命中', async () => {
+    const { repos, svc } = setup()
+    const eid = repos.employees.create({
+      name: 'e',
+      role: 'r',
+      modelProvider: 'anthropic',
+      modelName: 'm',
+      modelKeyRef: 'k',
+    })
+    const skillContent = [
+      '**Skill: Java 枚举新增值**',
+      '何时复用: Java enum 类需要新增一个枚举常量并保持兼容时',
+      '关键词: enum, java, 枚举',
+      '步骤:',
+      '1. find 项目根 -name "*Enum.java" 定位',
+      '2. sed 在 ; 之前插入新值',
+      '3. mvn compile 验证',
+    ].join('\n')
+    const id = repos.memoryItems.create({
+      scope: 'employee',
+      scopeId: eid,
+      kind: 'skill',
+      content: skillContent,
+      importanceScore: 0.7,
+    })
+    await reindexSource(svc, 'memory_item', id, skillContent)
+
+    const hits = await recall(svc, {
+      scope: 'employee',
+      scopeId: eid,
+      kinds: ['skill'],
+      query: 'Java enum 添加新枚举',
+      k: 3,
+    })
+    expect(hits.length).toBe(1)
+    expect(hits[0]!.kind).toBe('skill')
+    expect(hits[0]!.content).toContain('Java 枚举新增值')
+  })
+
+  test('scope=project 不应漏到 employee skill', async () => {
+    const { repos, svc } = setup()
+    const eid = repos.employees.create({
+      name: 'e',
+      role: 'r',
+      modelProvider: 'anthropic',
+      modelName: 'm',
+      modelKeyRef: 'k',
+    })
+    const otherEid = repos.employees.create({
+      name: 'other',
+      role: 'r',
+      modelProvider: 'anthropic',
+      modelName: 'm',
+      modelKeyRef: 'k',
+    })
+    const id1 = repos.memoryItems.create({
+      scope: 'employee',
+      scopeId: eid,
+      kind: 'skill',
+      content: 'employee A 的 skill：abcdef',
+    })
+    const id2 = repos.memoryItems.create({
+      scope: 'employee',
+      scopeId: otherEid,
+      kind: 'skill',
+      content: 'employee B 的 skill：abcdef',
+    })
+    await reindexSource(svc, 'memory_item', id1, 'employee A 的 skill：abcdef')
+    await reindexSource(svc, 'memory_item', id2, 'employee B 的 skill：abcdef')
+
+    const hits = await recall(svc, {
+      scope: 'employee',
+      scopeId: eid,
+      kinds: ['skill'],
+      query: 'abcdef',
+      k: 5,
+    })
+    // 即使内容相同，也只能拿回 employee A 的
+    expect(hits.every((h) => h.content.includes('employee A'))).toBe(true)
+    expect(hits.length).toBe(1)
+  })
+})
+
 describe('persistFromReport', () => {
   test('分流 facts/pitfalls/lessons 到正确 scope', async () => {
     const { repos, svc } = setup()
