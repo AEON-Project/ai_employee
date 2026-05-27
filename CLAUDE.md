@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`0f93758` fix(server): HTTP 派单后调 scheduler.enqueue — 修复 executeRequirement 永不触发
+> 最近：`9992f8c` feat(web): 补「需求」总列表页 + 项目详情页「需求」Tab
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
