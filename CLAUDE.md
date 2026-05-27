@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`0e1431e` feat(memory+tools): V2 O1 Skills 自演化系统 — emit_skill 系统 tool + memory_items kind='skill' + composer RAG 注入（参考 hermes agentskills.io，三方对比第一波 P0）
+> 最近：`f7a2433` feat(memory): V2 O2 memory 闭环强化 — emit_lesson 系统 tool（LLM 主动）+ reject 自动沉淀（用户被动）；PRD §3「纠错沉淀」核心机制最后一环闭环
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
