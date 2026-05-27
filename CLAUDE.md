@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`2100db8` feat(prompt+llm): V2 O8 prompt cache 精细化 — 三段独立 breakpoint（平台/项目/需求）；切换工单时平台+项目层仍命中省 token
+> 最近：`3c7e175` feat(tools+cli): V2 O9 Process notify-on-exit — 后台 Bash 进程退出自动写 message + 工单进行中时 scheduler.enqueue 唤醒；LLM 不再轮询 mvn/npm install 结果
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
