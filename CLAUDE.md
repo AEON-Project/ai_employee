@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`07dcbfe` docs(progress): ALPHA_TASKS §14 V2 优化清单（OpenClaw 对比 7 缺陷 + 6 优化项）
+> 最近：`1a1ee56` docs(progress): §14 重构为三方对比终版（OpenClaw + hermes-agent + ai_employee，D1-D13 缺陷 / O1-O13 优化项 / P0 = Skills 自演化 + memory 闭环 + sub-agent）
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
