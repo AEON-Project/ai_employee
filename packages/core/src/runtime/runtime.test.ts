@@ -576,7 +576,7 @@ describe('executeRequirement', () => {
     expect(req.status).toBe('待验收')
   })
 
-  test('V1.3: 声称的文件有对应 Edit ok=true tool_result → 允许 emit_deliverable', async () => {
+  test('V1.3 (Bash 透传版): 声称的文件出现在成功的 Bash 命令里 → 允许 emit_deliverable', async () => {
     const { services, repos, reqId, empId } = setup([
       [
         {
@@ -593,8 +593,21 @@ describe('executeRequirement', () => {
     ])
     assignRequirement(services, reqId, empId, { skipClarification: true })
 
-    // 预先写一条"已经成功 Edit 过这个文件"的 tool_result
+    // 预先写一对 tool_call + tool_result：Bash 命令含 path，exitCode=0
     const thread = repos.threads.findByRequirement(reqId)!
+    repos.messages.append({
+      threadId: thread.id,
+      role: 'assistant',
+      type: 'tool_call',
+      content: {
+        type: 'tool_call',
+        name: 'Bash',
+        callId: 'pre',
+        args: {
+          command: `sed -i '' 's/F24/F24,NEW/g' /some/abs/path/CardChannelTypeEnum.java`,
+        },
+      },
+    })
     repos.messages.append({
       threadId: thread.id,
       role: 'tool',
@@ -603,7 +616,7 @@ describe('executeRequirement', () => {
         type: 'tool_result',
         callId: 'pre',
         ok: true,
-        value: { path: '/some/abs/path/CardChannelTypeEnum.java', replaced: 1 },
+        value: { exitCode: 0, stdout: '', stderr: '', durationMs: 50, truncated: false },
       },
     })
 

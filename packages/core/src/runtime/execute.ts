@@ -463,16 +463,45 @@ function extractClaimedFilePaths(text: string): string[] {
   return out
 }
 
-/** 扫 thread 历史的 tool_result，收集所有 Write/Edit ok=true 的 path */
-function collectEditedPathsFromThread(repos: RuntimeServices['repos'], threadId: string): string[] {
+/**
+ * V1.3 (Bash 透传版)：扫 thread 历史的 Bash tool_call 命令文本，提取所有"在成功 Bash
+ * 命令里出现过的文件路径 token"。emit_deliverable 用这个集合跟 claimed path 对账。
+ *
+ * 实现：
+ *   1. 建立 callId → bash command 映射（从 tool_call message）
+ *   2. 对每条 tool_result ok=true 且 exitCode=0：抓对应 command 文本里的 file path token
+ *   3. 返回所有这些 path（去重）
+ *
+ * 限制（宽松版）：连 `cat file.java` 也视作"已涉及"。这是有意的 — 任何严格识别"写命令"
+ * （sed -i / echo > / python -c）都会脆弱。宽松版的语义是"LLM 不能凭空声明从没在 shell
+ * 出现过的文件名"，已经能挡住典型的"凭空谎报"路径。
+ */
+function collectModifiedPathsFromBashHistory(
+  repos: RuntimeServices['repos'],
+  threadId: string,
+): string[] {
   const all = repos.messages.listByThread(threadId)
-  const paths: string[] = []
+  const bashCallCommand = new Map<string, string>()
+  for (const m of all) {
+    if (m.type !== 'tool_call') continue
+    const c = m.contentJson as { name?: string; callId?: string; args?: { command?: string } }
+    if (c.name === 'Bash' && c.callId && typeof c.args?.command === 'string') {
+      bashCallCommand.set(c.callId, c.args.command)
+    }
+  }
+  const paths = new Set<string>()
   for (const m of all) {
     if (m.type !== 'tool_result') continue
-    const tr = m.contentJson as { ok?: boolean; value?: { path?: string } } | undefined
-    if (tr?.ok && tr.value?.path) paths.push(tr.value.path)
+    const tr = m.contentJson as
+      | { callId?: string; ok?: boolean; value?: { exitCode?: number } }
+      | undefined
+    if (!tr?.ok || !tr.callId) continue
+    if (tr.value?.exitCode != null && tr.value.exitCode !== 0) continue
+    const cmd = bashCallCommand.get(tr.callId)
+    if (!cmd) continue
+    for (const p of extractClaimedFilePaths(cmd)) paths.add(p)
   }
-  return paths
+  return [...paths]
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -674,7 +703,7 @@ async function dispatch(
       const claimedText = `${args.summary}\n${args.contentText ?? ''}`
       const claimedPaths = extractClaimedFilePaths(claimedText)
       if (claimedPaths.length > 0) {
-        const editedPaths = collectEditedPathsFromThread(repos, thread.id)
+        const editedPaths = collectModifiedPathsFromBashHistory(repos, thread.id)
         const unverified = claimedPaths.filter(
           (cp) => !editedPaths.some((ep) => ep.endsWith('/' + cp) || ep === cp || ep.endsWith(cp)),
         )
@@ -691,7 +720,7 @@ async function dispatch(
             type: 'error',
             content: {
               type: 'error',
-              message: `emit_deliverable 已阻止：你在交付物里声称改动了以下文件 [${unverified.join(', ')}]，但没有对应的 Edit / Write 工具调用记录。必须**先用 Edit 或 Write 真改文件**，确认 tool_result.ok=true，才能 emit_deliverable。不要谎报完成。`,
+              message: `emit_deliverable 已阻止：你在交付物里声称改动了以下文件 [${unverified.join(', ')}]，但 thread 历史里没有任何成功的 Bash 命令涉及过这些路径。必须**先用 Bash 命令真改文件**（如 \`sed -i "" "s/x/y/" path\` 或 \`echo "..." > path\`），确认 exitCode=0，才能 emit_deliverable。不要谎报完成。`,
               fatal: false,
             },
           })
@@ -737,6 +766,18 @@ async function dispatch(
     }
     default: {
       // 普通 tool —— 走 executor
+      // 先 append 一条 tool_call message（V1.3 对账要 Bash command 文本）
+      repos.messages.append({
+        threadId: thread.id,
+        role: 'assistant',
+        type: 'tool_call',
+        content: {
+          type: 'tool_call',
+          name: call.name,
+          callId: call.callId,
+          args: call.args,
+        },
+      })
       bus.emit('tool.invoked', { reqId, tool: call.name, input: call.args })
       const r = await services.toolExecutor.invoke(
         call,
