@@ -147,7 +147,8 @@ function applyEnv(cfg: AiempConfig): void {
   if (e.AIEMP_LOCALHOST_TOKEN_REF) cfg.server.localhostTokenRef = e.AIEMP_LOCALHOST_TOKEN_REF
 
   if (e.AIEMP_EMBEDDING_MODEL) cfg.embedding.model = e.AIEMP_EMBEDDING_MODEL
-  if (e.AIEMP_EMBEDDING_DIM) cfg.embedding.dim = numOrThrow('AIEMP_EMBEDDING_DIM', e.AIEMP_EMBEDDING_DIM)
+  if (e.AIEMP_EMBEDDING_DIM)
+    cfg.embedding.dim = numOrThrow('AIEMP_EMBEDDING_DIM', e.AIEMP_EMBEDDING_DIM)
 
   if (e.AIEMP_TG_BOT_TOKEN_REF) cfg.telegram.botTokenRef = e.AIEMP_TG_BOT_TOKEN_REF
   if (e.AIEMP_TG_CHAT_IDS) {
