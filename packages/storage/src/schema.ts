@@ -321,6 +321,30 @@ export const runtimeState = sqliteTable('runtime_state', {
 })
 
 // ──────────────────────────────────────────────────────────────
+// checkpoints — V2 O4 工单快照（baseline + manual）
+// 接单时 auto-baseline；LLM 关键步可调 checkpoint tool；reject 时可 revert
+// ──────────────────────────────────────────────────────────────
+export const checkpoints = sqliteTable(
+  'checkpoints',
+  {
+    id: text('id').primaryKey(),
+    requirementId: text('requirement_id')
+      .notNull()
+      .references(() => requirements.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: ['baseline', 'manual'] }).notNull(),
+    label: text('label').notNull(),
+    backendKind: text('backend_kind', { enum: ['git', 'tar', 'none'] }).notNull(),
+    /** git: commit sha (HEAD)；tar: 相对路径 checkpoints/<reqId>/<id>.tar.gz；none: null */
+    ref: text('ref'),
+    workdir: text('workdir'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({
+    byReq: index('ckpt_req').on(t.requirementId, t.createdAt),
+  }),
+)
+
+// ──────────────────────────────────────────────────────────────
 // tools + tool_grants
 // ──────────────────────────────────────────────────────────────
 export const tools = sqliteTable('tools', {

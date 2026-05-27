@@ -21,6 +21,7 @@ const EXPECTED_TABLES = [
   'tg_message_links',
   'chunks',
   'vec_chunks', // 虚拟表
+  'checkpoints', // V2 O4
   'schema_migrations',
 ]
 
@@ -34,6 +35,7 @@ describe('migrate()', () => {
         '0001_vec.sql',
         '0002_project_workdir.sql',
         '0003_requirement_parent.sql',
+        '0004_checkpoints.sql',
       ])
       expect(r1.skipped).toEqual([])
 
@@ -54,6 +56,7 @@ describe('migrate()', () => {
         '0001_vec.sql',
         '0002_project_workdir.sql',
         '0003_requirement_parent.sql',
+        '0004_checkpoints.sql',
       ])
 
       // 验证 drizzle 实例已绑定 schema：能 insert/select projects

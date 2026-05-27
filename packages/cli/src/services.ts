@@ -22,7 +22,9 @@ import {
   FILE_TOOL_NAMES,
 } from '@ai-emp/tools'
 import type { RuntimeServices, LLMFactory } from '@ai-emp/core/runtime'
-import { dbPath } from './config.js'
+import { dataDir, dbPath } from './config.js'
+import { join } from 'node:path'
+import { mkdirSync } from 'node:fs'
 
 export interface BootResult {
   services: RuntimeServices
@@ -77,6 +79,16 @@ export async function bootServices(): Promise<BootResult> {
     },
     // V1.1: 所有 file/shell tool 默认对全部员工授权
     standardToolNames: FILE_TOOL_NAMES,
+    // V2 O4: checkpoint 存放根目录（首次 boot 时创建）
+    checkpointsDir: (() => {
+      const dir = join(dataDir(), 'checkpoints')
+      try {
+        mkdirSync(dir, { recursive: true })
+      } catch {
+        // ignore — 由 checkpoint service 自己处理失败
+      }
+      return dir
+    })(),
     toolJsonSchema: (name) => {
       const def = toolsRegistry.get(name)
       if (!def) return undefined

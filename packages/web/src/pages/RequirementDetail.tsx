@@ -274,26 +274,77 @@ function Controls({ req, onChanged }: { req: Requirement; onChanged: () => void 
   )
 }
 
+interface CheckpointRow {
+  id: string
+  kind: 'baseline' | 'manual'
+  label: string
+  backendKind: 'git' | 'tar' | 'none'
+  createdAt: string | number
+}
+
 function ApprovePanel({ reqId, onChanged }: { reqId: string; onChanged: () => void }) {
+  const [checkpoints, setCheckpoints] = useState<CheckpointRow[]>([])
+  useEffect(() => {
+    api
+      .get<CheckpointRow[]>(`/api/requirements/${reqId}/checkpoints`)
+      .then(setCheckpoints)
+      .catch(() => setCheckpoints([]))
+  }, [reqId])
+
   async function approve() {
     await api.post(`/api/requirements/${reqId}/approve`)
     onChanged()
   }
   async function reject() {
-    // V2 O2 memory 闭环：让用户给个原因，引擎自动写入 employee.lesson 下次注入到同员工的 prompt
+    // V2 O2 memory 闭环：让用户给个原因，引擎自动写入 employee.lesson
     const reason = window.prompt(
       '请输入驳回原因（留空也可，但带原因会让该员工下次同类任务避免重蹈覆辙）：',
       '',
     )
     if (reason === null) return // 取消
+    // V2 O4 Checkpoint 回滚：若有可用 checkpoint，问用户是否回滚
+    let revertCheckpointId: string | undefined
+    const revertable = checkpoints.filter((c) => c.backendKind !== 'none')
+    if (revertable.length > 0) {
+      const labels = revertable
+        .map((c, i) => `${i + 1}. [${c.kind}] ${c.label} (${c.backendKind})`)
+        .join('\n')
+      const choice = window.prompt(
+        `检测到 ${revertable.length} 个可回滚 checkpoint：\n\n${labels}\n\n输入序号回滚（1-${revertable.length}）；留空 = 不回滚仅驳回；取消 = 中止操作`,
+        '',
+      )
+      if (choice === null) return
+      const trimmed = choice.trim()
+      if (trimmed) {
+        const idx = parseInt(trimmed, 10) - 1
+        if (idx >= 0 && idx < revertable.length) {
+          revertCheckpointId = revertable[idx]!.id
+          if (
+            !window.confirm(
+              `确认回滚到「${revertable[idx]!.label}」？\n这会硬性恢复 workdir 到该快照点（会先做 preRevert 备份）。`,
+            )
+          ) {
+            return
+          }
+        }
+      }
+    }
     await api.post(`/api/requirements/${reqId}/reject`, {
       reason: reason.trim() || undefined,
+      revertCheckpointId,
     })
     onChanged()
   }
   return (
     <div className="card flex items-center justify-between bg-purple-50 border-purple-200">
-      <span className="text-sm">交付物已准备就绪，请确认</span>
+      <span className="text-sm">
+        交付物已准备就绪，请确认
+        {checkpoints.length > 0 && (
+          <span className="ml-2 text-xs text-gray-500">
+            （{checkpoints.length} 个 checkpoint 可回滚）
+          </span>
+        )}
+      </span>
       <div className="flex gap-2">
         <button className="btn-primary" onClick={approve}>
           验收 ✓

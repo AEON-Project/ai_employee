@@ -49,6 +49,7 @@ const mockTools: RuntimeToolDef[] = [
   { name: 'emit_skill', kind: 'system', description: '', inputSchema: passThroughSchema },
   { name: 'emit_lesson', kind: 'system', description: '', inputSchema: passThroughSchema },
   { name: 'spawn_employee', kind: 'system', description: '', inputSchema: passThroughSchema },
+  { name: 'checkpoint', kind: 'system', description: '', inputSchema: passThroughSchema },
 ]
 const toolJsonSchema = (_name: string) => ({}) // 形状对 mock 测试不重要
 const mockRegistry = {
@@ -1135,6 +1136,167 @@ describe('executeRequirement', () => {
         ((m.contentJson as { message?: string }).message ?? '').includes('就是当前员工自己'),
     )
     expect(errMsg).toBeDefined()
+  })
+
+  test('V2 O4: 接单时自动建 baseline checkpoint（services 配 checkpointsDir + project 有 workdir）', async () => {
+    const { mkdtempSync, mkdirSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'ai-emp-ckpt-it-'))
+    const workdir = join(tmpRoot, 'project')
+    mkdirSync(workdir)
+    const ckptDir = join(tmpRoot, 'checkpoints')
+    mkdirSync(ckptDir)
+    try {
+      const { services, repos, reqId, empId } = setup([
+        [
+          {
+            type: 'tool_use_stop',
+            id: 't1',
+            name: 'emit_deliverable',
+            args: { summary: 'done', contentText: '...' },
+          },
+          { type: 'message_stop', reason: 'tool_use' },
+        ],
+      ])
+      // 注入 checkpointsDir + 在项目里写 workdir
+      ;(services as { checkpointsDir?: string }).checkpointsDir = ckptDir
+      const req = repos.requirements.findById(reqId)!
+      repos.projects.update(req.projectId!, { workdir })
+
+      assignRequirement(services, reqId, empId, { skipClarification: true })
+      await executeRequirement(reqId, services)
+
+      const baseline = repos.checkpoints.findBaseline(reqId)
+      expect(baseline).not.toBeNull()
+      expect(baseline!.label).toContain('auto baseline')
+      // 普通目录 → tar backend
+      expect(baseline!.backendKind).toBe('tar')
+      expect(baseline!.ref).toMatch(/\.tar\.gz$/)
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true })
+    }
+  })
+
+  test('V2 O4: 无 checkpointsDir 时跳过 baseline，引擎不阻断', async () => {
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_deliverable',
+          args: { summary: 'done', contentText: '...' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    // 不注入 checkpointsDir
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+    const baseline = repos.checkpoints.findBaseline(reqId)
+    expect(baseline).toBeNull()
+  })
+
+  test('V2 O4: checkpoint tool dispatch → 新增 manual 快照', async () => {
+    const { mkdtempSync, mkdirSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'ai-emp-ckpt-mtool-'))
+    const workdir = join(tmpRoot, 'project')
+    mkdirSync(workdir)
+    const ckptDir = join(tmpRoot, 'checkpoints')
+    mkdirSync(ckptDir)
+    try {
+      const { services, repos, reqId, empId } = setup([
+        // turn 0: checkpoint tool
+        [
+          {
+            type: 'tool_use_stop',
+            id: 't1',
+            name: 'checkpoint',
+            args: { label: 'after step 2' },
+          },
+          { type: 'message_stop', reason: 'tool_use' },
+        ],
+        // turn 1: emit_deliverable
+        [
+          {
+            type: 'tool_use_stop',
+            id: 't2',
+            name: 'emit_deliverable',
+            args: { summary: 'done', contentText: '...' },
+          },
+          { type: 'message_stop', reason: 'tool_use' },
+        ],
+      ])
+      ;(services as { checkpointsDir?: string }).checkpointsDir = ckptDir
+      const req = repos.requirements.findById(reqId)!
+      repos.projects.update(req.projectId!, { workdir })
+
+      assignRequirement(services, reqId, empId, { skipClarification: true })
+      await executeRequirement(reqId, services)
+
+      // 应有一个 baseline + 一个 manual
+      const all = repos.checkpoints.listByRequirement(reqId)
+      expect(all.length).toBe(2)
+      expect(all[0]!.kind).toBe('baseline')
+      const manual = all.find((c) => c.kind === 'manual')
+      expect(manual).toBeDefined()
+      expect(manual!.label).toBe('after step 2')
+      expect(manual!.backendKind).toBe('tar')
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true })
+    }
+  })
+
+  test('V2 O4: revertToCheckpoint 命令 → workdir 恢复 + thread 留痕', async () => {
+    const { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { revertToCheckpoint } = await import('./commands.js')
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'ai-emp-ckpt-rev-'))
+    const workdir = join(tmpRoot, 'project')
+    mkdirSync(workdir)
+    const ckptDir = join(tmpRoot, 'checkpoints')
+    mkdirSync(ckptDir)
+    try {
+      writeFileSync(join(workdir, 'a.txt'), 'original\n')
+      const { services, repos, reqId, empId } = setup([
+        [
+          {
+            type: 'tool_use_stop',
+            id: 't1',
+            name: 'emit_deliverable',
+            args: { summary: 'done', contentText: '...' },
+          },
+          { type: 'message_stop', reason: 'tool_use' },
+        ],
+      ])
+      ;(services as { checkpointsDir?: string }).checkpointsDir = ckptDir
+      const req = repos.requirements.findById(reqId)!
+      repos.projects.update(req.projectId!, { workdir })
+      assignRequirement(services, reqId, empId, { skipClarification: true })
+      await executeRequirement(reqId, services)
+
+      const baseline = repos.checkpoints.findBaseline(reqId)!
+      // 模拟 LLM 改坏文件
+      writeFileSync(join(workdir, 'a.txt'), 'CORRUPTED\n')
+
+      const r = await revertToCheckpoint(services, baseline.id)
+      expect(r.ok).toBe(true)
+      // 文件恢复
+      expect(readFileSync(join(workdir, 'a.txt'), 'utf8')).toBe('original\n')
+      // thread 有 '已回滚' 系统消息
+      const thread = repos.threads.findByRequirement(reqId)!
+      const msgs = repos.messages.listByThread(thread.id)
+      const revertMsg = msgs.find((m) => {
+        const t = (m.contentJson as { text?: string }).text ?? ''
+        return m.role === 'system' && t.includes('已回滚') && t.includes('auto baseline')
+      })
+      expect(revertMsg).toBeDefined()
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true })
+    }
   })
 
   test('V1.4: LLM 429 错误自动退避重试，不立即 system_pause', async () => {

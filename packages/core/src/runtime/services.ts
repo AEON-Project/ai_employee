@@ -100,4 +100,6 @@ export interface RuntimeServices {
     embed(texts: string[]): Promise<Float32Array[]>
     sqlite: import('bun:sqlite').Database
   }
+  /** V2 O4 Checkpoint：tar 归档 / preRevert 备份的存放根目录（绝对路径）；缺省时引擎不建快照 */
+  checkpointsDir?: string
 }

@@ -24,6 +24,7 @@ import {
   pauseRequirement,
   rejectRequirement,
   resumeRequirement,
+  revertToCheckpoint,
 } from '@ai-emp/core/runtime'
 import type { ServerDeps } from './server.js'
 
@@ -300,8 +301,24 @@ export function mountApi(app: Hono, deps: ServerDeps) {
   api.post('/requirements/:id/reject', async (c) => {
     const body = await c.req.json().catch(() => ({}))
     const reason = typeof body?.reason === 'string' ? body.reason : undefined
+    // V2 O4: 可选先回滚到指定 checkpoint 再 reject
+    const revertCheckpointId =
+      typeof body?.revertCheckpointId === 'string' ? body.revertCheckpointId : undefined
+    let revertResult: { ok: boolean; backupRef: string | null; error?: string } | null = null
+    if (revertCheckpointId) {
+      revertResult = await revertToCheckpoint(services, revertCheckpointId)
+    }
     await rejectRequirement(services, c.req.param('id'), { reason })
-    return c.json({ ok: true })
+    return c.json({ ok: true, revertResult })
+  })
+  api.get('/requirements/:id/checkpoints', (c) => {
+    const reqId = c.req.param('id')
+    const list = services.repos.checkpoints.listByRequirement(reqId)
+    return c.json(list)
+  })
+  api.post('/checkpoints/:id/revert', async (c) => {
+    const r = await revertToCheckpoint(services, c.req.param('id'))
+    return c.json(r)
   })
   api.post('/requirements/:id/force-end', async (c) => {
     const body = await c.req.json().catch(() => ({}))

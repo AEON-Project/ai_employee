@@ -35,6 +35,7 @@ import type {
 } from '@ai-emp/domain'
 import type { DB } from './db.js'
 import {
+  checkpoints,
   chunks,
   clarifications,
   conventions,
@@ -857,6 +858,70 @@ export class TgMessageLinksRepo {
 }
 
 // ──────────────────────────────────────────────────────────────
+// CheckpointsRepo — V2 O4
+// ──────────────────────────────────────────────────────────────
+export type CheckpointKind = 'baseline' | 'manual'
+export type CheckpointBackendKind = 'git' | 'tar' | 'none'
+
+export class CheckpointsRepo {
+  constructor(private readonly db: DB) {}
+
+  create(input: {
+    requirementId: string
+    kind: CheckpointKind
+    label: string
+    backendKind: CheckpointBackendKind
+    ref?: string | null
+    workdir?: string | null
+  }): string {
+    const id = newId()
+    this.db
+      .insert(checkpoints)
+      .values({
+        id,
+        requirementId: input.requirementId,
+        kind: input.kind,
+        label: input.label,
+        backendKind: input.backendKind,
+        ref: input.ref ?? null,
+        workdir: input.workdir ?? null,
+        createdAt: now(),
+      })
+      .run()
+    return id
+  }
+
+  findById(id: string) {
+    return this.db.select().from(checkpoints).where(eq(checkpoints.id, id)).all()[0] ?? null
+  }
+
+  listByRequirement(requirementId: string) {
+    return this.db
+      .select()
+      .from(checkpoints)
+      .where(eq(checkpoints.requirementId, requirementId))
+      .orderBy(asc(checkpoints.createdAt))
+      .all()
+  }
+
+  findBaseline(requirementId: string) {
+    return (
+      this.db
+        .select()
+        .from(checkpoints)
+        .where(and(eq(checkpoints.requirementId, requirementId), eq(checkpoints.kind, 'baseline')))
+        .orderBy(asc(checkpoints.createdAt))
+        .all()[0] ?? null
+    )
+  }
+
+  /** snapshot 完成后回填 backendKind + ref（internal use；下划线表示非公开 API） */
+  _setBackendRef(id: string, backendKind: CheckpointBackendKind, ref: string | null) {
+    this.db.update(checkpoints).set({ backendKind, ref }).where(eq(checkpoints.id, id)).run()
+  }
+}
+
+// ──────────────────────────────────────────────────────────────
 // 聚合 Repos
 // ──────────────────────────────────────────────────────────────
 export interface Repos {
@@ -873,6 +938,7 @@ export interface Repos {
   reports: ReportsRepo
   chunks: ChunksRepo
   tgMessageLinks: TgMessageLinksRepo
+  checkpoints: CheckpointsRepo
 }
 
 export function createRepos(db: DB): Repos {
@@ -890,5 +956,6 @@ export function createRepos(db: DB): Repos {
     reports: new ReportsRepo(db),
     chunks: new ChunksRepo(db),
     tgMessageLinks: new TgMessageLinksRepo(db),
+    checkpoints: new CheckpointsRepo(db),
   }
 }

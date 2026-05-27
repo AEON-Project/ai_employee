@@ -13,6 +13,7 @@ import {
 } from '@ai-emp/domain'
 import { transition } from './state-machine.js'
 import { reindexSource } from '../memory/memory.js'
+import { revert as revertSnapshot } from '../checkpoint/index.js'
 import type { RuntimeServices } from './services.js'
 
 export interface AnswerEntry {
@@ -275,4 +276,54 @@ export function assignRequirement(
   bus.emit('requirement.state_changed', { reqId, from: t.from, to: t.to, reason: t.reason })
   const thread = ensureThread(services, reqId)
   return { thread }
+}
+
+/**
+ * V2 O4: 把当前 workdir 回滚到指定 checkpoint。
+ *
+ * 安全策略：service 内部会先把当前 workdir 备份成 preRevert-<ts>.tar.gz，
+ * 然后做硬性恢复（git reset --hard 或 tar 解压覆盖）。
+ *
+ * 不改变 requirement 状态机 —— 调用方决定 revert 之后是否 reject / approve / 继续。
+ */
+export async function revertToCheckpoint(
+  services: RuntimeServices,
+  checkpointId: string,
+): Promise<{ ok: boolean; backupRef: string | null; error?: string }> {
+  const { repos } = services
+  const ckpt = repos.checkpoints.findById(checkpointId)
+  if (!ckpt) {
+    return { ok: false, backupRef: null, error: `checkpoint not found: ${checkpointId}` }
+  }
+  if (!services.checkpointsDir) {
+    return { ok: false, backupRef: null, error: 'engine has no checkpointsDir configured' }
+  }
+  const r = await revertSnapshot({
+    checkpoint: {
+      id: ckpt.id,
+      requirementId: ckpt.requirementId,
+      kind: ckpt.kind,
+      label: ckpt.label,
+      backendKind: ckpt.backendKind,
+      ref: ckpt.ref,
+      workdir: ckpt.workdir,
+    },
+    checkpointsDir: services.checkpointsDir,
+  })
+  // 落痕到 thread
+  const thread = repos.threads.findByRequirement(ckpt.requirementId)
+  if (thread) {
+    repos.messages.append({
+      threadId: thread.id,
+      role: 'system',
+      type: 'text',
+      content: {
+        type: 'text',
+        text: r.ok
+          ? `↩️ 已回滚到 checkpoint「${ckpt.label}」(${ckpt.backendKind})。当前 workdir 已恢复到该快照点；preRevert 备份：${r.backupRef ?? '(无)'}。`
+          : `⚠️ 回滚到「${ckpt.label}」失败：${r.error ?? 'unknown'}。preRevert 备份：${r.backupRef ?? '(无)'}。`,
+      },
+    })
+  }
+  return r
 }

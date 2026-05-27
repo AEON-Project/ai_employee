@@ -386,6 +386,46 @@ export const spawnEmployeeTool: ToolDef<SpawnEmployeeArgs, never> = {
   },
 }
 
+// ── checkpoint ──────────────────────────────────────────────
+//
+// V2 O4 Checkpoint —— 在关键步主动建快照，配合 reject 时的 revert 安全网。
+// LLM 在做"风险高且可回滚"的操作前（如大批量改文件、执行迁移、删数据）调一次。
+// 引擎入口已自动建 baseline；这个 tool 用于在 baseline 与最终交付之间插入中间快照。
+export const CheckpointArgsZ = z.object({
+  label: z.string().min(1).max(80),
+})
+export type CheckpointArgs = z.infer<typeof CheckpointArgsZ>
+
+export const checkpointTool: ToolDef<CheckpointArgs, never> = {
+  name: 'checkpoint',
+  kind: 'system',
+  description: [
+    '在当前 workdir 建一个 manual 快照，未来用户驳回时可一键回滚到这个点。',
+    '何时调用：',
+    '  - 即将做风险高且不易手动 undo 的操作前（批量改文件 / 执行迁移 / 删数据）',
+    '  - 完成一个有意义的阶段，希望"如果后面搞砸了能退回到这一步"',
+    'baseline 由引擎在工单接单时自动建，无需你手动建。',
+    '若 workdir 不存在或不可访问，引擎会写 system/error 并跳过；不暂停主流程。',
+  ].join('\n'),
+  inputSchema: CheckpointArgsZ,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      label: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 80,
+        description: '快照标签（如"after step 2: schema migration applied"），用户在 UI 看到',
+      },
+    },
+    required: ['label'],
+    additionalProperties: false,
+  },
+  invoke: async () => {
+    throw new Error('checkpoint must be dispatched by runtime')
+  },
+}
+
 /**
  * 全部系统级 tool 列表，registry 启动时一次注册。
  * 用 `ToolDef[]` 类型存储时各项 I/O 泛型实例化为 unknown — 数组元素只读，安全。
@@ -398,6 +438,7 @@ export const SYSTEM_TOOLS: ToolDef[] = [
   emitSkillTool as ToolDef,
   emitLessonTool as ToolDef,
   spawnEmployeeTool as ToolDef,
+  checkpointTool as ToolDef,
 ]
 
 export const SYSTEM_TOOL_NAMES = new Set(SYSTEM_TOOLS.map((t) => t.name))

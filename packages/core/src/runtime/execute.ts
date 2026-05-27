@@ -32,6 +32,7 @@ import { composeMinimalPrompt } from './prompt-minimal.js'
 import { compose as composeFullPrompt } from '../prompt/composer.js'
 import { reindexSource } from '../memory/memory.js'
 import { assignRequirement } from './commands.js'
+import { snapshot as snapshotCheckpoint } from '../checkpoint/index.js'
 import { DEFAULT_BUDGET_CAP } from '@ai-emp/domain'
 import type { RuntimeServices, RuntimeLLMChunk, RuntimeToolDef } from './services.js'
 
@@ -147,6 +148,48 @@ export async function executeRequirement(
 
   const budget = new BudgetTracker(req.budgetCapJson, execState.budgetUsedJson)
   budget.startWallClock()
+
+  // V2 O4: 接单后第一次跑时自动建 baseline 快照（idempotent — 已存在就跳过）
+  // 需要：services.checkpointsDir + project.workdir 都存在；任一缺失 silently skip
+  // 子工单（parentRequirementId 非空）不建 baseline —— 父工单已经覆盖
+  if (services.checkpointsDir && !req.parentRequirementId) {
+    const existing = repos.checkpoints.findBaseline(reqId)
+    if (!existing) {
+      const proj = req.projectId ? repos.projects.findById(req.projectId) : null
+      const workdir = proj?.workdir ?? null
+      const baselineId = repos.checkpoints.create({
+        requirementId: reqId,
+        kind: 'baseline',
+        label: 'auto baseline (on first execute)',
+        backendKind: 'none', // 先占位，snapshot 完后回填
+        workdir,
+      })
+      try {
+        const { backendKind, ref } = await snapshotCheckpoint({
+          requirementId: reqId,
+          checkpointId: baselineId,
+          workdir,
+          checkpointsDir: services.checkpointsDir,
+        })
+        // 用 raw SQL 更新（CheckpointsRepo 没暴露 update，简化用 storage 内部 db 不方便；
+        // 用 drizzle 直接更新现成实例不可，这里走 messages append 标记 + 重建一条）
+        // 最简：删旧 + 重建（kind=baseline 仅 1 条，删除安全）
+        // 实际更简单：直接用 sqlite 原生 update。为避免 schema 复杂化，加个简易方法。
+        // 但为不引入 update 方法 churn，这里走一个临时方案：删 + 重建（仅 baseline 创建路径用）
+        // 注意：删 + 重建会改 createdAt + id，但接下来不依赖 id；这里保留 id（不删）。
+        // 真正干净：CheckpointsRepo 加 setBackendRef
+        repos.checkpoints._setBackendRef(baselineId, backendKind, ref)
+        log.info('checkpoint.baseline.auto', {
+          reqId,
+          baselineId,
+          backendKind,
+          ref: ref?.slice(0, 16) ?? null,
+        })
+      } catch (err) {
+        log.warn('checkpoint.baseline.fail', { reqId, baselineId, err: String(err) })
+      }
+    }
+  }
 
   // V1.1: 所有 standard tool（file/shell）默认授权给员工 —— 单用户本地引擎，等同于用户在终端跑命令。
   const grantedNames: string[] = services.standardToolNames ?? []
@@ -771,6 +814,106 @@ async function dispatch(
           },
         ],
       })
+      return {
+        kind: 'continue',
+        newState: {
+          currentStep: ctx.currentStep,
+          historySummary: ctx.historySummary,
+          budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+        },
+      }
+    }
+    case 'checkpoint': {
+      // V2 O4: LLM 主动建 manual snapshot；不暂停主流程
+      const argsC = call.args as { label?: string }
+      const label = typeof argsC.label === 'string' ? argsC.label.trim() : ''
+      if (!label) {
+        repos.messages.append({
+          threadId: thread.id,
+          role: 'system',
+          type: 'error',
+          content: {
+            type: 'error',
+            message: 'checkpoint 已忽略：label 必填且非空',
+            fatal: false,
+          },
+        })
+        return {
+          kind: 'continue',
+          newState: {
+            currentStep: ctx.currentStep,
+            historySummary: ctx.historySummary,
+            budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+          },
+        }
+      }
+      if (!services.checkpointsDir) {
+        repos.messages.append({
+          threadId: thread.id,
+          role: 'system',
+          type: 'error',
+          content: {
+            type: 'error',
+            message: 'checkpoint 已忽略：引擎未配置 checkpointsDir（baseline 也不会建）',
+            fatal: false,
+          },
+        })
+        return {
+          kind: 'continue',
+          newState: {
+            currentStep: ctx.currentStep,
+            historySummary: ctx.historySummary,
+            budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+          },
+        }
+      }
+      const reqRowC = repos.requirements.findById(reqId)
+      const projC = reqRowC?.projectId ? repos.projects.findById(reqRowC.projectId) : null
+      const workdirC = projC?.workdir ?? null
+      const ckptId = repos.checkpoints.create({
+        requirementId: reqId,
+        kind: 'manual',
+        label,
+        backendKind: 'none',
+        workdir: workdirC,
+      })
+      try {
+        const { backendKind, ref } = await snapshotCheckpoint({
+          requirementId: reqId,
+          checkpointId: ckptId,
+          workdir: workdirC,
+          checkpointsDir: services.checkpointsDir,
+        })
+        repos.checkpoints._setBackendRef(ckptId, backendKind, ref)
+        log.info('checkpoint.manual', {
+          reqId,
+          ckptId,
+          label,
+          backendKind,
+          ref: ref?.slice(0, 16) ?? null,
+        })
+        repos.messages.append({
+          threadId: thread.id,
+          role: 'assistant',
+          type: 'text',
+          content: {
+            type: 'text',
+            text: `📸 已建快照「${label}」(${backendKind})。用户驳回时可回滚到此点。`,
+          },
+        })
+      } catch (err) {
+        log.warn('checkpoint.manual.fail', { reqId, ckptId, err: String(err) })
+        repos.messages.append({
+          threadId: thread.id,
+          role: 'system',
+          type: 'error',
+          content: {
+            type: 'error',
+            message: `checkpoint「${label}」快照失败：${String(err).slice(0, 200)}`,
+            fatal: false,
+          },
+        })
+      }
       return {
         kind: 'continue',
         newState: {
