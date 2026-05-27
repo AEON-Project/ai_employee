@@ -155,6 +155,31 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
     )
   }
 
+  // ④a 运行时状态：currentStep + historySummary
+  //   注释 §13/§14 早就要求注入，但实现遗漏 → LLM 看不到自己干了啥，反复在同一 step 内
+  //   advance_step / ask_user 死循环。这块是切断 LLM 重复输出的关键上下文。
+  const rs = repos.runtimeState.find(input.reqId)
+  if (rs) {
+    const totalSteps = req.planJson?.steps.length ?? 0
+    const stepHint =
+      totalSteps > 0
+        ? `共 ${totalSteps} 步，当前应该推进 step ${rs.currentStep}${rs.currentStep >= totalSteps ? '（已超出 plan 范围 → 应该 emit_deliverable）' : ''}`
+        : `当前步索引 ${rs.currentStep}`
+    parts.push(`## 当前进度\n- ${stepHint}`)
+    if (rs.historySummary && rs.historySummary.trim().length > 0) {
+      parts.push(
+        [
+          '## 已完成步骤摘要（不要重复总结已完成的 step）',
+          rs.historySummary.trim(),
+          '',
+          '⚠️ 上面已经记录了之前完成的 step。**不要**再对同一个 step 调 advance_step。',
+          '推进到下一 step 应该 `advance_step({ step_idx: <下一未完成 idx>, summary: "本步成果" })`。',
+          '若所有 plan step 都 done，直接 `emit_deliverable`。',
+        ].join('\n'),
+      )
+    }
+  }
+
   // ⑤ 协作规则
   parts.push(
     [

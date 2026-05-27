@@ -438,10 +438,12 @@ async function dispatch(
       const nextHistory = summary
         ? `${ctx.historySummary ? ctx.historySummary + '\n' : ''}[step ${completedIdx}] ${summary}`
         : ctx.historySummary
+      // currentStep 单调递增 —— LLM 可能反复报旧的 step_idx；不允许倒退或停滞
+      const nextStep = Math.max(ctx.currentStep + 1, completedIdx + 1)
       return {
         kind: 'continue',
         newState: {
-          currentStep: completedIdx + 1,
+          currentStep: nextStep,
           historySummary: nextHistory,
           budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
         },
