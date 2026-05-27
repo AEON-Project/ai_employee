@@ -56,15 +56,33 @@ bun packages/cli/src/index.ts init
 
 ## 4. 写入你的 LLM Key
 
-任选一个 keychain 名（如 `claude-main`、`deepseek-1`），把 secret 写进去：
+两种方式择一：
+
+### 方式 A · `.env`（开发推荐，最快）
+
+把 key 直接写 `.env`，员工记录用 `env://` 协议引用：
 
 ```bash
-# 方式 A：命令行直传
+echo "AIEMP_ANTHROPIC_API_KEY=sk-ant-XXX" >> .env
+```
+
+然后创建员工时，`modelKeyRef` 字段填 `env://AIEMP_ANTHROPIC_API_KEY` 即可。
+
+### 方式 B · OS Keychain（生产推荐，secret 永不落文件）
+
+任选一个 keychain 名，把 secret 写进去：
+
+```bash
+# 命令行直传
 bun packages/cli/src/index.ts keychain set claude-main sk-ant-XXX
 
-# 方式 B：环境变量（避免在 shell history 留痕）
+# 或环境变量（避免在 shell history 留痕）
 AIEMP_SECRET="sk-ant-XXX" bun packages/cli/src/index.ts keychain set claude-main
 ```
+
+员工 `modelKeyRef` 填 `claude-main`（即 keychain 中的 key 名）。
+
+> 切换方式只需改员工的 `modelKeyRef` 一个字段；前缀 `env://` 走 .env，其他走 keychain。
 
 ## 5. 启动服务
 

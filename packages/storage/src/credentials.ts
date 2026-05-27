@@ -56,8 +56,21 @@ export class CredentialsRepo {
     return this.keychain.get(row.keychainKey)
   }
 
-  /** 按 keychainKey 读 secret（runtime/cli 已知 key 时跳过 DB） */
+  /**
+   * 按 keychainKey 读 secret（runtime/cli 已知 key 时跳过 DB）。
+   *
+   * 支持两种引用协议：
+   *   - 普通 keychain key：`my-llm-key` → 从 OS keychain 读
+   *   - 环境变量引用：`env://AIEMP_ANTHROPIC_API_KEY` → 从 process.env 读
+   *
+   * env:// 形式方便开发期把 key 写 .env；生产建议改用 keychain。
+   */
   readSecretByKey(keychainKey: string): Promise<string | null> {
+    if (keychainKey.startsWith('env://')) {
+      const envName = keychainKey.slice('env://'.length)
+      const v = process.env[envName]
+      return Promise.resolve(v && v.length > 0 ? v : null)
+    }
     return this.keychain.get(keychainKey)
   }
 

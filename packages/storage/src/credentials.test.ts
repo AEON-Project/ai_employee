@@ -83,6 +83,31 @@ describe('CredentialsRepo', () => {
   })
 })
 
+describe('env:// 引用协议', () => {
+  test('readSecretByKey(env://NAME) 从 process.env 读', async () => {
+    const env = setup()
+    process.env.AIEMP_TEST_KEY = 'env-secret-123'
+    try {
+      const v = await env.repo.readSecretByKey('env://AIEMP_TEST_KEY')
+      expect(v).toBe('env-secret-123')
+    } finally {
+      delete process.env.AIEMP_TEST_KEY
+    }
+  })
+
+  test('env 变量不存在 → null', async () => {
+    const env = setup()
+    delete process.env.AIEMP_NEVER_SET
+    expect(await env.repo.readSecretByKey('env://AIEMP_NEVER_SET')).toBeNull()
+  })
+
+  test('普通 keychainKey 不受 env:// 路径影响', async () => {
+    const env = setup()
+    await env.keychain.set('plain-key', 'kc-secret')
+    expect(await env.repo.readSecretByKey('plain-key')).toBe('kc-secret')
+  })
+})
+
 describe('InMemoryKeychainStore', () => {
   test('set / get / remove 基本流程', async () => {
     const k = new InMemoryKeychainStore()
