@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Diff2HtmlUI } from 'diff2html/lib/ui/js/diff2html-ui-slim.js'
+import 'diff2html/bundles/css/diff2html.min.css'
 import { api, wsConnect } from '../lib/api'
 import type { Clarification, Message, Requirement, ThreadResponse } from '../lib/types'
 import { StatusBadge } from '../components/StatusBadge'
@@ -95,7 +97,9 @@ interface GitDiffResponse {
 function GitDiffPanel({ reqId }: { reqId: string }) {
   const [data, setData] = useState<GitDiffResponse | null>(null)
   const [loading, setLoading] = useState(true)
-  const [showFull, setShowFull] = useState(false)
+  const [layout, setLayout] = useState<'side-by-side' | 'line-by-line'>('side-by-side')
+  const diffContainerRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -115,6 +119,25 @@ function GitDiffPanel({ reqId }: { reqId: string }) {
       cancelled = true
     }
   }, [reqId])
+
+  // 用 diff2html 渲染 — GitHub 风格的文件列表 + side-by-side / line-by-line 切换
+  useEffect(() => {
+    if (!diffContainerRef.current || !data?.diff) return
+    diffContainerRef.current.innerHTML = ''
+    const ui = new Diff2HtmlUI(diffContainerRef.current, data.diff, {
+      drawFileList: true,
+      fileListToggle: true,
+      fileListStartVisible: true,
+      fileContentToggle: true,
+      matching: 'lines',
+      outputFormat: layout,
+      synchronisedScroll: true,
+      highlight: true,
+      renderNothingWhenEmpty: false,
+      colorScheme: 'dark',
+    })
+    ui.draw()
+  }, [data?.diff, layout])
 
   if (loading) return <div className="card text-sm text-muted">📊 加载 Git Diff...</div>
   if (!data) return null
@@ -141,40 +164,33 @@ function GitDiffPanel({ reqId }: { reqId: string }) {
       </div>
     )
   }
-  const diff = data.diff ?? ''
-  const previewLines = 100
-  const lines = diff.split('\n')
-  const isLong = lines.length > previewLines
-  const shown = showFull || !isLong ? diff : lines.slice(0, previewLines).join('\n')
   return (
     <div className="card text-sm">
-      <div className="font-semibold mb-2">📊 Git Diff（{data.workdir}）</div>
-      <div className="mb-2">
-        <div className="text-xs text-muted mb-1">改动统计：</div>
-        <pre className="whitespace-pre-wrap text-xs bg-muted/10 rounded p-2">{data.stat}</pre>
-      </div>
-      <div>
-        <div className="text-xs text-muted mb-1">
-          完整 diff
-          {isLong
-            ? `（共 ${lines.length} 行${showFull ? '' : `，预览前 ${previewLines} 行`}）`
-            : ''}
-          {data.truncated ? ' [服务端已截断 200KB]' : ''}：
-        </div>
-        <pre className="whitespace-pre-wrap text-xs bg-muted/10 rounded p-2 max-h-[400px] overflow-auto">
-          {shown}
-          {!showFull && isLong && '\n... (省略)'}
-        </pre>
-        {isLong && (
+      <div className="flex items-center justify-between mb-3">
+        <div className="font-semibold">📊 Git Diff（{data.workdir}）</div>
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            className="text-xs text-blue-500 mt-1"
-            onClick={() => setShowFull((v) => !v)}
+            className={`text-xs px-2 py-1 rounded ${
+              layout === 'side-by-side' ? 'bg-accent text-white' : 'bg-slate-100 text-slate-600'
+            }`}
+            onClick={() => setLayout('side-by-side')}
           >
-            {showFull ? '收起' : `展开全部 ${lines.length} 行`}
+            ◧ 左右对比
           </button>
-        )}
+          <button
+            type="button"
+            className={`text-xs px-2 py-1 rounded ${
+              layout === 'line-by-line' ? 'bg-accent text-white' : 'bg-slate-100 text-slate-600'
+            }`}
+            onClick={() => setLayout('line-by-line')}
+          >
+            ☰ 行内
+          </button>
+        </div>
       </div>
+      {data.truncated && <p className="text-xs text-warn mb-2">⚠️ diff 内容已被服务端截断 200KB</p>}
+      <div ref={diffContainerRef} className="diff2html-container text-xs" />
     </div>
   )
 }

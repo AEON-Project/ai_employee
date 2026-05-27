@@ -45,7 +45,12 @@ export function parseHash(hash: string): Route {
 export function useRoute(): Route {
   const [r, setR] = useState<Route>(() => parseHash(location.hash))
   useEffect(() => {
-    const onChange = () => setR(parseHash(location.hash))
+    const onChange = () => {
+      const h = location.hash
+      // diff2html 用 #d2h-xxxxx 做文件锚点跳转，与我们的 hash router 冲突 — 忽略
+      if (h.startsWith('#d2h-') || h.startsWith('#') === false) return
+      setR(parseHash(h))
+    }
     window.addEventListener('hashchange', onChange)
     return () => window.removeEventListener('hashchange', onChange)
   }, [])

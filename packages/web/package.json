@@ -9,6 +9,7 @@
     "preview": "bun --bun vite preview"
   },
   "dependencies": {
+    "diff2html": "^3.4.56",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "zustand": "^5.0.0"
