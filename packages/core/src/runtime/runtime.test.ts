@@ -241,6 +241,79 @@ describe('executeRequirement', () => {
     expect(r2.exit).toBe('delivered')
   })
 
+  test('多个 text_delta 合并为单条 message（防止 UI 思维链竖排 bug）', async () => {
+    const { services, repos, reqId, empId } = setup([
+      // 模拟中文 provider 把一句话切成 6 个细碎 chunk
+      [
+        { type: 'text_delta', text: '逐' },
+        { type: 'text_delta', text: '步' },
+        { type: 'text_delta', text: '进行' },
+        { type: 'text_delta', text: '这些' },
+        { type: 'text_delta', text: '任务' },
+        { type: 'text_delta', text: '。' },
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_deliverable',
+          args: { summary: '完成', contentText: '正文' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    const textMsgs = msgs.filter((m) => m.role === 'assistant' && m.type === 'text')
+    // streaming 段应合并为 1 条；另有 emit_deliverable 写入的 contentText 1 条 → 总共 2 条
+    const streamingText = textMsgs.find(
+      (m) => (m.contentJson as { text?: string }).text === '逐步进行这些任务。',
+    )
+    expect(streamingText).toBeDefined()
+    // 反向断言：不应出现单字消息
+    const singleCharMsgs = textMsgs.filter(
+      (m) => ((m.contentJson as { text?: string }).text ?? '').length === 1,
+    )
+    expect(singleCharMsgs).toHaveLength(0)
+  })
+
+  test('thinking_delta 和 text_delta 切换时分别合并为各自的 message', async () => {
+    const { services, repos, reqId, empId } = setup([
+      [
+        { type: 'thinking_delta', text: '让' },
+        { type: 'thinking_delta', text: '我' },
+        { type: 'thinking_delta', text: '想想' },
+        { type: 'text_delta', text: '结' },
+        { type: 'text_delta', text: '论' },
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_deliverable',
+          args: { summary: '完成', contentText: '正文' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    const thinking = msgs.filter((m) => m.type === 'thinking')
+    const text = msgs.filter(
+      (m) =>
+        m.role === 'assistant' &&
+        m.type === 'text' &&
+        (m.contentJson as { text?: string }).text === '结论',
+    )
+    expect(thinking).toHaveLength(1)
+    expect((thinking[0]!.contentJson as { text: string }).text).toBe('让我想想')
+    expect(text).toHaveLength(1)
+  })
+
   test('Budget tokens 触达 → 已暂停 + budget.exceeded', async () => {
     const { services, repos, reqId, empId, bus } = setup([
       // 一次性消耗超过 small cap.maxTokens

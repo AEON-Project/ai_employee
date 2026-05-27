@@ -159,6 +159,7 @@ export async function executeRequirement(
     let textBuf = ''
     let llmError: string | null = null
     let saw_stop = false
+    const streamBuffer = createStreamingBuffer({ repos, bus, threadId: thread.id })
 
     const cacheBp = (prompt as unknown as { cacheBreakpoints?: number[] }).cacheBreakpoints
     const llmT0 = performance.now()
@@ -193,7 +194,7 @@ export async function executeRequirement(
         firstChunkMs = Math.round(performance.now() - llmT0)
         log.info('llm.call.first_chunk', { reqId, firstChunkMs, chunkType: chunk.type })
       }
-      const out = handleChunk(chunk, { thread, repos, bus, reqId, threadId: thread.id, budget })
+      const out = handleChunk(chunk, { buffer: streamBuffer, budget })
       if (out.kind === 'tool') {
         decision = out.call
         break
@@ -206,6 +207,9 @@ export async function executeRequirement(
       if (out.kind === 'stop') saw_stop = true
       if (decision) break
     }
+    // 兜底 flush：provider 没发 message_stop / tool_use_stop / error，
+    // 直接断流时仍要把累积的 text 落库。
+    streamBuffer.flush()
     const llmMs = Math.round(performance.now() - llmT0)
     if (llmError) {
       log.error('llm.call.error', { reqId, error: llmError, ms: llmMs, chunks: chunkCount })
@@ -287,16 +291,64 @@ export async function executeRequirement(
 }
 
 // ──────────────────────────────────────────────────────────────
-// chunk 处理：thinking/text → message append；tool_use_stop → 终止
+// streaming buffer：同一段 thinking / text 累积到 1 条 message
+//   provider 把 delta 切得很碎时（中文常见每 1–3 字一个 chunk），
+//   不缓冲会落库成"每字一条"，UI 上呈竖排。
+//   类型切换（thinking ↔ text）或 stream 结束（tool_use_stop /
+//   message_stop / error / 循环退出）时 flush。
+// ──────────────────────────────────────────────────────────────
+interface StreamingBuffer {
+  push(type: 'thinking' | 'text', text: string): void
+  flush(): void
+}
+
+function createStreamingBuffer(ctx: {
+  repos: RuntimeServices['repos']
+  bus: RuntimeServices['bus']
+  threadId: string
+}): StreamingBuffer {
+  let pending: { type: 'thinking' | 'text'; text: string } | null = null
+  const flush = () => {
+    if (!pending || pending.text.length === 0) {
+      pending = null
+      return
+    }
+    const { type, text } = pending
+    pending = null
+    const r = ctx.repos.messages.append({
+      threadId: ctx.threadId,
+      role: 'assistant',
+      type,
+      content: { type, text },
+    })
+    ctx.bus.emit('message.appended', {
+      threadId: ctx.threadId,
+      message: {
+        id: r.id,
+        threadId: ctx.threadId,
+        seq: r.seq,
+        role: 'assistant',
+        type,
+      },
+    })
+  }
+  return {
+    push(type, text) {
+      if (pending && pending.type !== type) flush()
+      if (!pending) pending = { type, text: '' }
+      pending.text += text
+    },
+    flush,
+  }
+}
+
+// ──────────────────────────────────────────────────────────────
+// chunk 处理：thinking/text → buffer；tool_use_stop → 终止
 // ──────────────────────────────────────────────────────────────
 function handleChunk(
   c: RuntimeLLMChunk,
   ctx: {
-    thread: { id: string }
-    repos: RuntimeServices['repos']
-    bus: RuntimeServices['bus']
-    reqId: string
-    threadId: string
+    buffer: StreamingBuffer
     budget: BudgetTracker
   },
 ):
@@ -308,25 +360,11 @@ function handleChunk(
   switch (c.type) {
     case 'thinking_delta':
     case 'text_delta': {
-      const r = ctx.repos.messages.append({
-        threadId: ctx.threadId,
-        role: 'assistant',
-        type: c.type === 'thinking_delta' ? 'thinking' : 'text',
-        content: { type: c.type === 'thinking_delta' ? 'thinking' : 'text', text: c.text },
-      })
-      ctx.bus.emit('message.appended', {
-        threadId: ctx.threadId,
-        message: {
-          id: r.id,
-          threadId: ctx.threadId,
-          seq: r.seq,
-          role: 'assistant',
-          type: c.type === 'thinking_delta' ? 'thinking' : 'text',
-        },
-      })
+      ctx.buffer.push(c.type === 'thinking_delta' ? 'thinking' : 'text', c.text)
       return { kind: 'text', text: c.text }
     }
     case 'tool_use_stop': {
+      ctx.buffer.flush()
       return { kind: 'tool', call: { callId: c.id, name: c.name, args: c.args } }
     }
     case 'usage': {
@@ -334,8 +372,10 @@ function handleChunk(
       return { kind: 'noop' }
     }
     case 'message_stop':
+      ctx.buffer.flush()
       return { kind: 'stop' }
     case 'error':
+      ctx.buffer.flush()
       return { kind: 'error', message: c.error.message }
     default:
       return { kind: 'noop' }
