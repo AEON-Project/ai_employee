@@ -39,3 +39,5 @@
 | `0f93758` | fix(server): HTTP 派单后调 scheduler.enqueue — 修复 executeRequirement 永不触发（α 阶段 server 模式 P0 bug；e2e 测试一直绕过 server 直调 execute 所以未覆盖） | — |
 | `9992f8c` | feat(web): 补「需求」总列表页 + 项目详情页「需求」Tab（顶栏 #/requirements 表格视图+9 状态筛选；后端 GET /requirements 支持 status/projectId/all 组合查询） | [PRD V1 §M4](../product/PRD_V1.md#m4-需求任务入口) |
 | `0a00156` | fix(ux): LLM 错误/system_pause 在 UI 思维链可见 + Controls 加 busy/err 显示（"点击继续无响应"根因：systemPause 没 append error message + Controls 吞错误） | — |
+| `6cf9253` | docs(debugging): 更新 playwright MCP 全流程测试模板（工具速查/e2e 启动/三条交叉证据/常见 pitfall） | [DEBUGGING.md](../ai/DEBUGGING.md) |
+| `4fbea13` | feat(logging): 结构化 NDJSON 日志体系（packages/domain/logger + 埋点 HTTP/scheduler/LLM/SQL + 脱敏 + 「日志先行」工程纪律） | [DEBUGGING.md §3-6](../ai/DEBUGGING.md) |
