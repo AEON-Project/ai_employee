@@ -12,6 +12,7 @@ export function NewRequirementPage() {
     projectId: '',
     employeeId: '',
     skipClarification: false,
+    cronSpec: '',
   })
   const [creating, setCreating] = useState(false)
   const [err, setErr] = useState('')
@@ -31,8 +32,18 @@ export function NewRequirementPage() {
         description: form.description,
       }
       if (form.projectId) body.projectId = form.projectId
+      // V2 O5: cron 模板（非空）— 创建为定时工单
+      if (form.cronSpec.trim()) {
+        body.cronSpec = form.cronSpec.trim()
+        if (!form.employeeId) {
+          setErr('cron 模板必须指派员工（每次触发用同一员工执行）')
+          setCreating(false)
+          return
+        }
+      }
       const r = await api.post<Requirement>('/api/requirements', body)
       if (form.employeeId) {
+        // cron 模板也调 assign — 这样 cronTick 才能拿到 assigneeId
         await api.post(`/api/requirements/${r.id}/assign`, {
           employeeId: form.employeeId,
           skipClarification: form.skipClarification,
@@ -107,6 +118,23 @@ export function NewRequirementPage() {
             />
             跳过澄清，直接执行
           </label>
+          <div>
+            <label className="label">定时（可选）</label>
+            <input
+              className="input"
+              placeholder="例：daily 09:00 / weekly mon 09:00 / every 30 minutes"
+              value={form.cronSpec}
+              onChange={(e) => setForm({ ...form, cronSpec: e.target.value })}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              填了之后这条工单是"定时模板"：引擎按 cron 周期创建副本派给指定员工执行（原模板永不被
+              dispatch）。支持：
+              <code className="bg-gray-100 px-1">every N minutes</code> /{' '}
+              <code className="bg-gray-100 px-1">every N hours</code> /{' '}
+              <code className="bg-gray-100 px-1">daily HH:MM</code> /{' '}
+              <code className="bg-gray-100 px-1">weekly mon|tue|... HH:MM</code>。
+            </p>
+          </div>
           {err && <p className="text-red-600 text-sm">{err}</p>}
           <button className="btn-primary" disabled={creating} onClick={submit}>
             创建并指派

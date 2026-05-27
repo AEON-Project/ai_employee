@@ -146,6 +146,11 @@ export const requirements = sqliteTable(
     parentRequirementId: text('parent_requirement_id').references((): any => requirements.id, {
       onDelete: 'set null',
     }),
+    // V2 O5: 定时模板字段 — cronSpec 非空表示这条工单是"模板"，引擎不直接 dispatch；
+    // 定时 tick 时按 cron 创建 child（parentRequirementId=模板.id）派给同员工执行。
+    cronSpec: text('cron_spec'),
+    cronEnabled: integer('cron_enabled', { mode: 'boolean' }).notNull().default(true),
+    cronLastRunAt: integer('cron_last_run_at', { mode: 'timestamp_ms' }),
   },
   (t) => ({
     byProj: index('req_proj').on(t.projectId),

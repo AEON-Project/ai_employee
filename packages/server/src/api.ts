@@ -231,15 +231,33 @@ export function mountApi(app: Hono, deps: ServerDeps) {
             maxWallTimeMs: z.number().int().positive(),
           })
           .optional(),
+        // V2 O5: cron 定时模板
+        cronSpec: z.string().optional(),
+        cronEnabled: z.boolean().optional(),
       })
       .safeParse(body)
     if (!parsed.success) return c.json({ error: 'invalid', issues: parsed.error.issues }, 400)
+    // V2 O5: cronSpec 非空时校验语法
+    if (parsed.data.cronSpec && parsed.data.cronSpec.trim().length > 0) {
+      const { parseCron } = await import('@ai-emp/core/cron')
+      if (!parseCron(parsed.data.cronSpec)) {
+        return c.json(
+          {
+            error: 'invalid_cron_spec',
+            message: `不识别的 cron 语法: "${parsed.data.cronSpec}"。支持: "every N minutes" / "every N hours" / "daily HH:MM" / "weekly mon|tue|... HH:MM"`,
+          },
+          400,
+        )
+      }
+    }
     const id = repos.requirements.create({
       title: parsed.data.title,
       description: parsed.data.description,
       projectId: parsed.data.projectId ?? null,
       priority: (parsed.data.priority as Priority | undefined) ?? 'P1',
       budgetCap: parsed.data.budgetCap ?? DEFAULT_BUDGET_CAP,
+      cronSpec: parsed.data.cronSpec ?? null,
+      cronEnabled: parsed.data.cronEnabled,
     })
     return c.json(repos.requirements.findById(id), 201)
   })

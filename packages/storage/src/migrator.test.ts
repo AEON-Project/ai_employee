@@ -36,6 +36,7 @@ describe('migrate()', () => {
         '0002_project_workdir.sql',
         '0003_requirement_parent.sql',
         '0004_checkpoints.sql',
+        '0005_requirement_cron.sql',
       ])
       expect(r1.skipped).toEqual([])
 
@@ -57,6 +58,7 @@ describe('migrate()', () => {
         '0002_project_workdir.sql',
         '0003_requirement_parent.sql',
         '0004_checkpoints.sql',
+        '0005_requirement_cron.sql',
       ])
 
       // 验证 drizzle 实例已绑定 schema：能 insert/select projects

@@ -295,6 +295,9 @@ export class RequirementsRepo {
     budgetCap: BudgetCap
     /** V2 O3 sub-agent: 父需求 id；通过 spawn_employee 派生的子工单填这里 */
     parentRequirementId?: string | null
+    /** V2 O5 cron: 定时模板表达式（"every 5 minutes" / "daily 09:00" / "weekly mon 09:00"） */
+    cronSpec?: string | null
+    cronEnabled?: boolean
   }): string {
     const id = newId()
     this.db
@@ -309,10 +312,27 @@ export class RequirementsRepo {
         status: '待分派',
         budgetCapJson: input.budgetCap,
         parentRequirementId: input.parentRequirementId ?? null,
+        cronSpec: input.cronSpec ?? null,
+        cronEnabled: input.cronEnabled ?? true,
         createdAt: now(),
       })
       .run()
     return id
+  }
+
+  /** V2 O5: 列出所有 cronSpec 非空 + cronEnabled 的模板工单 */
+  listCronTemplates() {
+    return this.db
+      .select()
+      .from(requirements)
+      .where(and(eq(requirements.cronEnabled, true)))
+      .all()
+      .filter((r) => r.cronSpec !== null && r.cronSpec.trim().length > 0)
+  }
+
+  /** V2 O5: 模板触发完一次 child 后回写 lastRunAt */
+  setCronLastRun(id: string, at: Date) {
+    this.db.update(requirements).set({ cronLastRunAt: at }).where(eq(requirements.id, id)).run()
   }
 
   findById(id: string) {

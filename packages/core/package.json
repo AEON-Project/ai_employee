@@ -11,7 +11,9 @@
     "./runtime": "./src/runtime/index.ts",
     "./memory": "./src/memory/index.ts",
     "./prompt": "./src/prompt/index.ts",
-    "./metrics": "./src/metrics/index.ts"
+    "./metrics": "./src/metrics/index.ts",
+    "./cron": "./src/cron/index.ts",
+    "./checkpoint": "./src/checkpoint/index.ts"
   },
   "scripts": {
     "typecheck": "tsc -b",

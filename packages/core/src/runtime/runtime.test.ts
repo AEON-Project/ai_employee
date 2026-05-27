@@ -1464,6 +1464,135 @@ describe('RequirementScheduler', () => {
     }
     expect(maxObservedActive).toBe(1)
   })
+
+  test('V2 O5: cronTick 到期 → 创建 child + assign + 父 lastRunAt 更新 + child enqueue', async () => {
+    const { services, repos } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't',
+          name: 'emit_deliverable',
+          args: { summary: 'ok', contentText: 'cron child done' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    const empId = repos.employees.list()[0]!.id
+    // 创建一个 cron 模板（cronSpec 非空 + assigneeId 已填）
+    const templateId = repos.requirements.create({
+      title: '日报',
+      description: '每天 9 点收一次',
+      assigneeId: empId,
+      budgetCap: DEFAULT_BUDGET_CAP,
+      cronSpec: 'every 1 minutes',
+    })
+    const tpl = repos.requirements.findById(templateId)!
+    expect(tpl.cronSpec).toBe('every 1 minutes')
+    expect(tpl.cronEnabled).toBe(true)
+
+    const sched = RequirementScheduler.bindServices(services, { maxConcurrent: 1 })
+
+    // 设 now 为模板创建后 2 分钟，应到期
+    const future = new Date(tpl.createdAt.getTime() + 2 * 60_000)
+    const tick = await sched.cronTick(future)
+    expect(tick.triggered).toBe(1)
+    expect(tick.skipped).toBe(0)
+
+    // 父模板 lastRunAt 应被更新
+    const tplAfter = repos.requirements.findById(templateId)!
+    expect(tplAfter.cronLastRunAt).not.toBeNull()
+
+    // 应创建一个 child（parentRequirementId = template.id）
+    const subs = repos.requirements.listAll().filter((r) => r.parentRequirementId === templateId)
+    expect(subs.length).toBe(1)
+    expect(subs[0]!.title).toContain('日报')
+    expect(subs[0]!.title).toContain('定时触发')
+    expect(subs[0]!.cronSpec).toBeNull() // child 不复制 cron
+    expect(subs[0]!.assigneeId).toBe(empId)
+
+    // 等 scheduler 跑完 child（enqueue 已自动）
+    while (sched.size().active + sched.size().queued > 0) {
+      await Bun.sleep(5)
+    }
+    const childFinal = repos.requirements.findById(subs[0]!.id)!
+    expect(childFinal.status).toBe('待验收')
+  })
+
+  test('V2 O5: cronTick 未到期 → skipped', async () => {
+    const { services, repos } = setup([])
+    const empId = repos.employees.list()[0]!.id
+    const tplId = repos.requirements.create({
+      title: '日报',
+      description: '...',
+      assigneeId: empId,
+      budgetCap: DEFAULT_BUDGET_CAP,
+      cronSpec: 'every 10 minutes',
+    })
+    const tpl = repos.requirements.findById(tplId)!
+    const sched = RequirementScheduler.bindServices(services, { maxConcurrent: 1 })
+    // 距 createdAt 才 1 分钟，every 10 minutes 未到期
+    const now = new Date(tpl.createdAt.getTime() + 60_000)
+    const r = await sched.cronTick(now)
+    expect(r.triggered).toBe(0)
+    expect(r.skipped).toBe(1)
+    expect(repos.requirements.listAll().filter((x) => x.parentRequirementId === tplId).length).toBe(
+      0,
+    )
+  })
+
+  test('V2 O5: cronEnabled=false → tick 跳过该模板', async () => {
+    const { services, repos } = setup([])
+    const empId = repos.employees.list()[0]!.id
+    const tplId = repos.requirements.create({
+      title: '日报',
+      description: '...',
+      assigneeId: empId,
+      budgetCap: DEFAULT_BUDGET_CAP,
+      cronSpec: 'every 1 minutes',
+      cronEnabled: false,
+    })
+    const tpl = repos.requirements.findById(tplId)!
+    expect(tpl.cronEnabled).toBe(false)
+    const sched = RequirementScheduler.bindServices(services, { maxConcurrent: 1 })
+    const future = new Date(tpl.createdAt.getTime() + 5 * 60_000)
+    const r = await sched.cronTick(future)
+    expect(r.triggered).toBe(0)
+    expect(r.skipped).toBe(0) // disabled 的模板根本不会进 listCronTemplates
+  })
+
+  test('V2 O5: cronTick 无 assignee → skipped', async () => {
+    const { services, repos } = setup([])
+    const tplId = repos.requirements.create({
+      title: '幽灵日报',
+      description: '...',
+      budgetCap: DEFAULT_BUDGET_CAP,
+      cronSpec: 'every 1 minutes',
+    })
+    const tpl = repos.requirements.findById(tplId)!
+    expect(tpl.assigneeId).toBeNull()
+    const sched = RequirementScheduler.bindServices(services, { maxConcurrent: 1 })
+    const future = new Date(tpl.createdAt.getTime() + 5 * 60_000)
+    const r = await sched.cronTick(future)
+    expect(r.triggered).toBe(0)
+    expect(r.skipped).toBe(1)
+  })
+
+  test('V2 O5: cronTick 无效 cronSpec → skipped + warn', async () => {
+    const { services, repos } = setup([])
+    const empId = repos.employees.list()[0]!.id
+    const tplId = repos.requirements.create({
+      title: '坏 cron',
+      description: '...',
+      assigneeId: empId,
+      budgetCap: DEFAULT_BUDGET_CAP,
+      cronSpec: 'whenever',
+    })
+    void tplId
+    const sched = RequirementScheduler.bindServices(services, { maxConcurrent: 1 })
+    const r = await sched.cronTick(new Date(Date.now() + 1_000_000))
+    expect(r.triggered).toBe(0)
+    expect(r.skipped).toBe(1)
+  })
 })
 
 // ── 用例 4：scanInflight ────────────────────────────────────

@@ -112,6 +112,8 @@ export async function cmdServe(args: { port?: number }): Promise<number> {
 
   // 启动 scheduler（α 串行）— 必须先于 createServer，让 HTTP /assign 路由能拿到
   const scheduler = RequirementScheduler.bindServices(boot.services, { maxConcurrent: 1 })
+  // V2 O5: 启动 cron ticker（每 60s 扫描 cron 模板）— 单用户场景独占进程即可
+  scheduler.startCronTicker(60_000)
 
   const handle = createServer({
     port,
@@ -163,6 +165,7 @@ export async function cmdServe(args: { port?: number }): Promise<number> {
   return await new Promise<number>((resolve) => {
     const stop = async () => {
       console.log('\n关闭中...')
+      scheduler.stopCronTicker()
       scheduler.drain()
       if (bridge) await bridge.stop()
       await handle.stop()
