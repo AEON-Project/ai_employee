@@ -100,35 +100,61 @@ function TabBtn({
 }
 
 function Controls({ req, onChanged }: { req: Requirement; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
   async function call(path: string, body?: unknown) {
-    await api.post(path, body)
-    onChanged()
+    setBusy(true)
+    setErr('')
+    try {
+      await api.post(path, body)
+      onChanged()
+    } catch (ex) {
+      setErr(String(ex))
+    } finally {
+      setBusy(false)
+    }
   }
   return (
-    <div className="flex flex-wrap gap-2">
-      {req.status === '进行中' && (
-        <button className="btn" onClick={() => call(`/api/requirements/${req.id}/pause`)}>
-          ⏸ 暂停
-        </button>
-      )}
-      {req.status === '已暂停' && (
-        <button className="btn" onClick={() => call(`/api/requirements/${req.id}/resume`)}>
-          ▶ 继续
-        </button>
-      )}
-      {(req.status === '已暂停' || req.status === '进行中') && (
-        <button
-          className="btn"
-          onClick={() => call(`/api/requirements/${req.id}/force-end`, { keep: true })}
-        >
-          ⏹ 强制结束（保留）
-        </button>
-      )}
-      {req.status !== '已完成' && req.status !== '已驳回' && req.status !== '已取消' && (
-        <button className="btn-danger" onClick={() => call(`/api/requirements/${req.id}/cancel`)}>
-          取消
-        </button>
-      )}
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex flex-wrap gap-2">
+        {req.status === '进行中' && (
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={() => call(`/api/requirements/${req.id}/pause`)}
+          >
+            ⏸ 暂停
+          </button>
+        )}
+        {req.status === '已暂停' && (
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={() => call(`/api/requirements/${req.id}/resume`)}
+          >
+            ▶ 继续
+          </button>
+        )}
+        {(req.status === '已暂停' || req.status === '进行中') && (
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={() => call(`/api/requirements/${req.id}/force-end`, { keep: true })}
+          >
+            ⏹ 强制结束（保留）
+          </button>
+        )}
+        {req.status !== '已完成' && req.status !== '已驳回' && req.status !== '已取消' && (
+          <button
+            className="btn-danger"
+            disabled={busy}
+            onClick={() => call(`/api/requirements/${req.id}/cancel`)}
+          >
+            取消
+          </button>
+        )}
+      </div>
+      {err && <p className="text-xs text-red-600 max-w-md text-right">{err}</p>}
     </div>
   )
 }

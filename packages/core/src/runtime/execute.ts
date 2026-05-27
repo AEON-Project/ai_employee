@@ -485,6 +485,20 @@ function systemPause(
   if (!req) return { exit: 'paused' }
   const t = transition(req.status, { kind: 'system_pause', reason })
   services.repos.requirements.setStatus(reqId, t.to)
+  // 把错误原因写进 messages 表，UI 思维链可见 — 否则用户看到的是「状态变回已暂停 + 思维链无消息」体验
+  const thread = services.repos.threads.findByRequirement(reqId)
+  if (thread) {
+    services.repos.messages.append({
+      threadId: thread.id,
+      role: 'system',
+      type: 'error',
+      content: {
+        type: 'error',
+        message: `system_pause: ${reason}${detail ? ` — ${detail}` : ''}`,
+        fatal: false,
+      },
+    })
+  }
   services.bus.emit('requirement.state_changed', {
     reqId,
     from: t.from,
