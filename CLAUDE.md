@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`412e1ab` fix(runtime): streaming delta 合并为单条 message（修复思维链「逐字竖排」bug）
+> 最近：`09bc043` feat(web/thread): 思维链 seq 倒序展示 + 滚动分页加载历史 + 每条消息加时间
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
