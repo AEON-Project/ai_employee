@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`6555d2d` fix(runtime): advance_step 标 plan done + 累积 historySummary + resume 复位 budget（修复 LLM 死循环）
+> 最近：`eb5bd5e` fix(prompt+runtime): composer 注入 currentStep + historySummary + advance_step step 单调（E2E 闭环：5 步 plan 全 done → 待验收）
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
