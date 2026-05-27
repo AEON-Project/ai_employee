@@ -45,6 +45,18 @@ export function resumeRequirement(services: RuntimeServices, reqId: RequirementI
   if (!req) throw new Error(`requirement not found: ${reqId}`)
   const t = transition(req.status, { kind: 'resume' })
   repos.requirements.setStatus(reqId, t.to)
+  // 复位 budgetUsed —— 用户主动 resume 等同于"给一次新额度"，
+  // 否则 budget_iterations / budget_tokens 暂停后 resume 会立刻再次撞 cap。
+  // 保留 currentStep + historySummary（不丢进度）。
+  const rs = repos.runtimeState.find(reqId)
+  if (rs) {
+    repos.runtimeState.upsert({
+      requirementId: reqId,
+      currentStep: rs.currentStep,
+      historySummary: rs.historySummary,
+      budgetUsed: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+    })
+  }
   bus.emit('requirement.state_changed', { reqId, from: t.from, to: t.to, reason: t.reason })
 }
 

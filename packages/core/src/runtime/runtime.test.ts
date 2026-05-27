@@ -25,6 +25,7 @@ import {
   assignRequirement,
   draftClarification,
   executeRequirement,
+  resumeRequirement,
   scanInflight,
   type LLMFactory,
   type RuntimeLLMChunk,
@@ -357,6 +358,145 @@ describe('executeRequirement', () => {
     // 200k tokens cap，不会真触发 exceeded；改用 advance_step 隐式后退出
     // 这里我们不强求 exceeded，仅验证 r.exit 为合法值
     expect(['delivered', 'paused', 'awaiting_user']).toContain(r.exit)
+  })
+
+  test('advance_step 标 plan.step.status=done + historySummary 累积（防 LLM 死循环）', async () => {
+    const { services, repos, reqId, empId } = setup([
+      // turn 0
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'advance_step',
+          args: { step_idx: 0, summary: '完成步骤 0' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 1
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'advance_step',
+          args: { step_idx: 1, summary: '完成步骤 1' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 2
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't3',
+          name: 'emit_deliverable',
+          args: { summary: '交付', contentText: '正文' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+
+    // 预置 plan：3 步全 pending
+    repos.requirements.setPlan(reqId, {
+      steps: [
+        { idx: 0, text: 'step 0', status: 'pending' },
+        { idx: 1, text: 'step 1', status: 'pending' },
+        { idx: 2, text: 'step 2', status: 'pending' },
+      ],
+    })
+
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+
+    const planNow = repos.requirements.findById(reqId)!.planJson!
+    expect(planNow.steps[0]!.status).toBe('done')
+    expect(planNow.steps[1]!.status).toBe('done')
+    expect(planNow.steps[2]!.status).toBe('pending') // 未推进
+
+    const rs = repos.runtimeState.find(reqId)!
+    expect(rs.historySummary).toContain('[step 0] 完成步骤 0')
+    expect(rs.historySummary).toContain('[step 1] 完成步骤 1')
+  })
+
+  test('update_plan 不擦写 historySummary（只改后续 step 安排）', async () => {
+    const { services, repos, reqId, empId } = setup([
+      // turn 0: advance_step 累积 history
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'advance_step',
+          args: { step_idx: 0, summary: '完成调研' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 1: update_plan
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'update_plan',
+          args: {
+            plan: {
+              steps: [
+                { idx: 0, text: 'old', status: 'done' },
+                { idx: 1, text: 'new step 1', status: 'pending' },
+              ],
+            },
+            reason: '调整',
+          },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 2: emit_deliverable
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't3',
+          name: 'emit_deliverable',
+          args: { summary: '交付', contentText: '正文' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+
+    repos.requirements.setPlan(reqId, {
+      steps: [
+        { idx: 0, text: 'step 0', status: 'pending' },
+        { idx: 1, text: 'step 1', status: 'pending' },
+      ],
+    })
+
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+
+    const rs = repos.runtimeState.find(reqId)!
+    expect(rs.historySummary).toContain('[step 0] 完成调研')
+  })
+
+  test('resumeRequirement 复位 budgetUsed（防 resume 立刻再撞 cap）', () => {
+    const { services, repos, reqId, empId } = setup([])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    // 模拟已撞 cap 暂停的状态
+    repos.runtimeState.upsert({
+      requirementId: reqId,
+      currentStep: 5,
+      historySummary: 'prior progress',
+      budgetUsed: { iterations: 30, tokensIn: 100, tokensOut: 200, wallTimeMs: 60000 },
+    })
+    repos.requirements.setStatus(reqId, '已暂停')
+
+    resumeRequirement(services, reqId)
+
+    const rs = repos.runtimeState.find(reqId)!
+    expect(rs.budgetUsedJson).toEqual({
+      iterations: 0,
+      tokensIn: 0,
+      tokensOut: 0,
+      wallTimeMs: 0,
+    })
+    // 保留进度
+    expect(rs.currentStep).toBe(5)
+    expect(rs.historySummary).toBe('prior progress')
+    expect(repos.requirements.findById(reqId)!.status).toBe('进行中')
   })
 })
 

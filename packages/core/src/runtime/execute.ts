@@ -248,6 +248,7 @@ export async function executeRequirement(
         thread,
         employee,
         currentStep: execState.currentStep,
+        historySummary: execState.historySummary,
         plan: req.planJson ?? null,
         grantedNames,
       })
@@ -393,6 +394,7 @@ async function dispatch(
     thread: { id: string }
     employee: { id: string }
     currentStep: number
+    historySummary: string
     plan: Plan | null
     grantedNames: string[]
   },
@@ -409,21 +411,38 @@ async function dispatch(
   switch (call.name) {
     case 'advance_step': {
       const args = call.args as { step_idx?: number; summary?: string }
-      // append assistant text message 记录 step summary
-      if (args.summary) {
+      const completedIdx =
+        typeof args.step_idx === 'number' && args.step_idx >= 0 ? args.step_idx : ctx.currentStep
+      // ① 更新 plan：把 idx <= completedIdx 的 step 标 done（容忍 LLM 跳号）
+      const reqRow = repos.requirements.findById(reqId)
+      if (reqRow?.planJson) {
+        const nextPlan: Plan = {
+          ...reqRow.planJson,
+          steps: reqRow.planJson.steps.map((s) =>
+            s.idx <= completedIdx && s.status !== 'done' ? { ...s, status: 'done' as const } : s,
+          ),
+        }
+        repos.requirements.setPlan(reqId, nextPlan)
+      }
+      // ② summary → assistant text message（供 UI 思维链可见）
+      const summary = typeof args.summary === 'string' ? args.summary.trim() : ''
+      if (summary) {
         repos.messages.append({
           threadId: thread.id,
           role: 'assistant',
           type: 'text',
-          content: { type: 'text', text: args.summary },
+          content: { type: 'text', text: summary },
         })
       }
-      const newStep = ctx.currentStep + 1
+      // ③ historySummary 累积（不清空）— LLM 下轮能看到自己干过什么，避免空转
+      const nextHistory = summary
+        ? `${ctx.historySummary ? ctx.historySummary + '\n' : ''}[step ${completedIdx}] ${summary}`
+        : ctx.historySummary
       return {
         kind: 'continue',
         newState: {
-          currentStep: newStep,
-          historySummary: '',
+          currentStep: completedIdx + 1,
+          historySummary: nextHistory,
           budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
         },
       }
@@ -437,11 +456,12 @@ async function dispatch(
         type: 'plan_update',
         content: { type: 'plan_update', plan: args.plan, reason: args.reason },
       })
+      // 保留 historySummary —— update_plan 不代表"清空已做"，只是改后续 step 安排
       return {
         kind: 'continue',
         newState: {
           currentStep: ctx.currentStep,
-          historySummary: '',
+          historySummary: ctx.historySummary,
           budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
         },
       }
@@ -589,7 +609,7 @@ async function dispatch(
         kind: 'continue',
         newState: {
           currentStep: ctx.currentStep,
-          historySummary: '',
+          historySummary: ctx.historySummary,
           budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
         },
       }
