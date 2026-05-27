@@ -75,8 +75,10 @@ export async function bootServices(): Promise<BootResult> {
     toolJsonSchema: (name) => {
       const def = toolsRegistry.get(name)
       if (!def) return undefined
-      // Zod → JSON Schema 的桥简化为：暴露 description + 接受任意 object
-      // 完整实现见后续 T1.3+；当前最小可工作版本
+      // 优先取 ToolDef.inputJsonSchema（系统级 tool 必填）；普通 tool 缺省时退化为通用 object
+      if (def.inputJsonSchema) {
+        return { ...def.inputJsonSchema, description: def.description }
+      }
       return {
         type: 'object',
         properties: {},

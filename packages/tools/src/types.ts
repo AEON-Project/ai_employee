@@ -25,6 +25,9 @@ export interface ToolDef<I = unknown, O = unknown> {
   kind: ToolKind
   /** zod schema；ToolExecutor 用它校验 args */
   inputSchema: z.ZodType<I>
+  /** JSON Schema 形式的 input schema，给 LLM provider tool_use schema 用（zod 不直接给 LLM）
+   *  系统级 tool 必填（不写 LLM 会瞎 build args）；普通 tool 可选（无则用最小通用 schema） */
+  inputJsonSchema?: Record<string, unknown>
   /** 输出 schema（可选，给文档化与未来类型化客户端用） */
   outputSchema?: z.ZodType<O>
   /** 实际执行函数；系统级 tool 这里通常是 noop（runtime 自己处理） */
