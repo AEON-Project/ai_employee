@@ -35,3 +35,4 @@
 | `11a36ec` | docs(claude): 加"本地端到端调试（浏览器自动化）"段 — browser_navigate MCP | [docs/ai/DEBUGGING.md](../ai/DEBUGGING.md) |
 | `48631d4` | docs(claude): 回填 d644706 + 11a36ec 到"已交付"表 | — |
 | `964f6ac` | docs: 按文件夹分类整理文档 + 拆分 CLAUDE.md（新增 docs/{product,architecture,progress,ai}/） | 本文件 + [WORKFLOW](../ai/WORKFLOW.md) + [DEBUGGING](../ai/DEBUGGING.md) + [CONVENTIONS](../architecture/CONVENTIONS.md) |
+| `fb888a3` | feat(web): 补员工/项目/技能详情页 — 填齐 α 阶段 Web UI 占位（员工技能挂载多选+记忆 Tab / 项目规范+知识 CRUD / 技能编辑器）；后端补 PATCH/DELETE skills、PATCH employees、POST memory items | [PRD V1 §M1-M3](../product/PRD_V1.md#m2-员工能力载体) |
