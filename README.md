@@ -35,22 +35,35 @@ bun run scripts/postinstall.ts
 # 3. 构建 Web UI
 cd packages/web && bun run build && cd ../..
 
-# 4. 首次配置
-./ai-emp init
+# 4. 配 LLM key 到 .env
+cp .env.example .env
+# 编辑 .env，至少填一个 provider 的三个字段：
+#   AIEMP_ANTHROPIC_API_KEY=sk-ant-xxxx
+#   AIEMP_ANTHROPIC_MODEL=claude-opus-4-7
 
-# 5. 写入你的 LLM Key（任选一种）
-./ai-emp keychain set claude-main sk-ant-xxxx     # 走 OS Keychain
-# 或：echo "AIEMP_ANTHROPIC_API_KEY=sk-ant-xxxx" >> .env  # 走 .env
+# 5. 首次引导 + 导入样板员工
+./ai-emp init
+./ai-emp seed     # 3 项目 + 5 员工 + 8 技能；样板员工的 modelKeyRef
+                  # 默认是 env://AIEMP_ANTHROPIC_API_KEY，配完 .env 直接能用
 
 # 6. 启动服务
 ./ai-emp serve
 ```
 
-启动后会打印浏览器登录链接 `http://localhost:7878/auth?token=XXX`，点开就能用。
+启动后打印浏览器登录链接 `http://localhost:7878/auth?token=XXX`，点开就能派需求。
 
-> `./ai-emp` 是项目根的 shell wrapper（转发到 `bun packages/cli/src/index.ts`）。
+> `./ai-emp` 是项目根 shell wrapper（转发到 `bun packages/cli/src/index.ts`）。
 > `alias ai-emp="$(pwd)/ai-emp"` 后可省略 `./`。
-> 编译单二进制：`bun build packages/cli/src/index.ts --compile --outfile dist/ai-emp`。
+> 编译单二进制：`bun run build:cli` 出 `dist/ai-emp`。
+
+### 配置取舍
+
+| 工作流 | LLM key 放哪 | 员工 `modelKeyRef` 填什么 |
+|---|---|---|
+| **开发期 / 个人** | `.env`（明文，git 已忽略） | `env://AIEMP_ANTHROPIC_API_KEY` |
+| **生产 / 分发** | OS Keychain | `claude-main` 之类的 keychain key 名 |
+
+生产想换成 keychain：`./ai-emp keychain set claude-main sk-ant-xxxx`，然后在 UI 里改员工 `modelKeyRef`。两种路径共存，按需切换。
 
 **完整步骤、命令清单、排错** → [GETTING_STARTED.md](./GETTING_STARTED.md)
 
