@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`3c7e175` feat(tools+cli): V2 O9 Process notify-on-exit — 后台 Bash 进程退出自动写 message + 工单进行中时 scheduler.enqueue 唤醒；LLM 不再轮询 mvn/npm install 结果
+> 最近：`f0027e4` feat(tools): V2 O10 危险命令审批 — Bash 黑名单拦截（rm -rf / sudo / curl\|sh / dd / mkfs / fork bomb / shutdown），env AIEMP_ALLOW_DANGEROUS=1 跳过；§14 O1-O10 全部完成 🎯
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
