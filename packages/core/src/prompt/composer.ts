@@ -211,9 +211,8 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
       '- 多次失败时切策略：grep 找不到就 `find -type f -name "*.java" | head`；sed 改不动就 `python3 -c "import re; ..."`',
       '- ⛔ tool_result.ok=false（命令非 0 退出 / 异常）时**严禁**直接 advance_step。',
       '  引擎会硬阻止并要求你先修好（重新查路径 / 改命令）。',
-      '- ⛔ emit_deliverable 的 summary / contentText 里**只能写真改过的文件**。',
-      '  引擎会扫描 thread 历史的 Bash 命令文本，把声称改的文件路径与"实际执行过含该路径的写命令"对账：',
-      '  声称了文件但没有对应写命令 → emit_deliverable 被拒绝。**不要谎报"已修改 X.java"**。',
+      '- emit_deliverable 时如实汇报：summary / contentText 写真实改动；用户会在"待验收"',
+      '  状态查看代码（git diff / 文件内容）后决定 approve 或 reject。**谎报会被 reject**。',
     ].join('\n'),
   )
 

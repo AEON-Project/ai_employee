@@ -440,71 +440,6 @@ function handleChunk(
 }
 
 // ──────────────────────────────────────────────────────────────
-// V1.3 helpers — 检查 LLM 是否谎报"改了文件"
-// ──────────────────────────────────────────────────────────────
-
-/** 从 LLM 文本里提取"看起来像文件路径"的 token（带常见源代码后缀） */
-function extractClaimedFilePaths(text: string): string[] {
-  // 路径里允许字母/数字/. _ - / 组合；后缀白名单（避免抓 "1.0" / "v1.5" 之类）
-  const re =
-    /[A-Za-z0-9_\-./]+\.(java|kt|scala|ts|tsx|js|jsx|mjs|cjs|py|go|rs|rb|php|cs|swift|cpp|c|h|hpp|md|sql|json|yaml|yml|html|css|scss|less|xml|properties|toml|gradle|sh)\b/g
-  const matches = text.match(re) ?? []
-  // 去重 + 过滤明显非文件的 token（纯版本号等）
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const m of matches) {
-    const norm = m.trim()
-    // 至少包含一个 / 或 . 前面有字符（避免单纯 ".java" 被匹）
-    if (norm.length < 5) continue
-    if (seen.has(norm)) continue
-    seen.add(norm)
-    out.push(norm)
-  }
-  return out
-}
-
-/**
- * V1.3 (Bash 透传版)：扫 thread 历史的 Bash tool_call 命令文本，提取所有"在成功 Bash
- * 命令里出现过的文件路径 token"。emit_deliverable 用这个集合跟 claimed path 对账。
- *
- * 实现：
- *   1. 建立 callId → bash command 映射（从 tool_call message）
- *   2. 对每条 tool_result ok=true 且 exitCode=0：抓对应 command 文本里的 file path token
- *   3. 返回所有这些 path（去重）
- *
- * 限制（宽松版）：连 `cat file.java` 也视作"已涉及"。这是有意的 — 任何严格识别"写命令"
- * （sed -i / echo > / python -c）都会脆弱。宽松版的语义是"LLM 不能凭空声明从没在 shell
- * 出现过的文件名"，已经能挡住典型的"凭空谎报"路径。
- */
-function collectModifiedPathsFromBashHistory(
-  repos: RuntimeServices['repos'],
-  threadId: string,
-): string[] {
-  const all = repos.messages.listByThread(threadId)
-  const bashCallCommand = new Map<string, string>()
-  for (const m of all) {
-    if (m.type !== 'tool_call') continue
-    const c = m.contentJson as { name?: string; callId?: string; args?: { command?: string } }
-    if (c.name === 'Bash' && c.callId && typeof c.args?.command === 'string') {
-      bashCallCommand.set(c.callId, c.args.command)
-    }
-  }
-  const paths = new Set<string>()
-  for (const m of all) {
-    if (m.type !== 'tool_result') continue
-    const tr = m.contentJson as
-      | { callId?: string; ok?: boolean; value?: { exitCode?: number } }
-      | undefined
-    if (!tr?.ok || !tr.callId) continue
-    if (tr.value?.exitCode != null && tr.value.exitCode !== 0) continue
-    const cmd = bashCallCommand.get(tr.callId)
-    if (!cmd) continue
-    for (const p of extractClaimedFilePaths(cmd)) paths.add(p)
-  }
-  return [...paths]
-}
-
-// ──────────────────────────────────────────────────────────────
 // Dispatch — 把 LLM tool call 翻译成状态机事件 / 工具执行
 // ──────────────────────────────────────────────────────────────
 async function dispatch(
@@ -697,45 +632,9 @@ async function dispatch(
     }
     case 'emit_deliverable': {
       const args = call.args as { contentText?: string; contentRef?: string; summary: string }
-
-      // V1.3: 防"谎报完成" —— summary/contentText 里声称改了文件，必须有对应的
-      // Write/Edit ok=true 工具调用记录；否则拒绝交付。
-      const claimedText = `${args.summary}\n${args.contentText ?? ''}`
-      const claimedPaths = extractClaimedFilePaths(claimedText)
-      if (claimedPaths.length > 0) {
-        const editedPaths = collectModifiedPathsFromBashHistory(repos, thread.id)
-        const unverified = claimedPaths.filter(
-          (cp) => !editedPaths.some((ep) => ep.endsWith('/' + cp) || ep === cp || ep.endsWith(cp)),
-        )
-        if (unverified.length > 0) {
-          log.warn('emit_deliverable.blocked', {
-            reqId,
-            claimedPaths,
-            editedCount: editedPaths.length,
-            unverified,
-          })
-          repos.messages.append({
-            threadId: thread.id,
-            role: 'system',
-            type: 'error',
-            content: {
-              type: 'error',
-              message: `emit_deliverable 已阻止：你在交付物里声称改动了以下文件 [${unverified.join(', ')}]，但 thread 历史里没有任何成功的 Bash 命令涉及过这些路径。必须**先用 Bash 命令真改文件**（如 \`sed -i "" "s/x/y/" path\` 或 \`echo "..." > path\`），确认 exitCode=0，才能 emit_deliverable。不要谎报完成。`,
-              fatal: false,
-            },
-          })
-          // 不进入"已交付"状态，让 LLM 下轮去真改
-          return {
-            kind: 'continue',
-            newState: {
-              currentStep: ctx.currentStep,
-              historySummary: ctx.historySummary,
-              budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
-            },
-          }
-        }
-      }
-
+      // 不在 runtime 层判断"是否真改了文件" —— 借鉴 OpenClaw 设计哲学：
+      // 员工提交工作，老板验收（approve / reject）时判断真假，引擎不预判。
+      // 失败 / 谎报由用户在「待验收」状态看 git diff 等线索后 reject 即可。
       // attachments 由 server 层落盘；这里只记录 ref / text
       if (args.contentText) {
         repos.messages.append({

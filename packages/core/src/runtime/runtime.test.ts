@@ -532,9 +532,10 @@ describe('executeRequirement', () => {
     expect(rs.currentStep).toBe(0)
   })
 
-  test('V1.3: emit_deliverable 声称改文件但没 Edit/Write 记录 → 拒绝交付 + 写 system/error', async () => {
+  test('emit_deliverable 不做"是否真改"对账，员工提交后直接进「待验收」由用户判断真假（借鉴 OpenClaw 设计）', async () => {
+    // 即使 LLM 声称改了文件但实际 0 个 Bash 调用 → 引擎不拦截，照样进入待验收。
+    // 用户在「待验收」状态看 git diff / 文件内容自己判断是否 reject。
     const { services, repos, reqId, empId } = setup([
-      // turn 0: 只 emit_deliverable，不真改文件
       [
         {
           type: 'tool_use_stop',
@@ -547,84 +548,12 @@ describe('executeRequirement', () => {
         },
         { type: 'message_stop', reason: 'tool_use' },
       ],
-      // turn 1: 提供"真改"的兜底（避免 mock LLM 死循环）
-      [
-        {
-          type: 'tool_use_stop',
-          id: 't2',
-          name: 'emit_deliverable',
-          args: { summary: '简单交付', contentText: 'OK' },
-        },
-        { type: 'message_stop', reason: 'tool_use' },
-      ],
     ])
     assignRequirement(services, reqId, empId, { skipClarification: true })
     await executeRequirement(reqId, services)
-
+    expect(repos.requirements.findById(reqId)!.status).toBe('待验收')
+    // 不应有 "emit_deliverable 已阻止" 类 system/error
     const thread = repos.threads.findByRequirement(reqId)!
-    const msgs = repos.messages.listByThread(thread.id)
-    // 第 1 次 emit 应被拒绝 → 有 system/error 提示
-    const blocked = msgs.find(
-      (m) =>
-        m.role === 'system' &&
-        m.type === 'error' &&
-        ((m.contentJson as { message?: string }).message ?? '').includes('emit_deliverable 已阻止'),
-    )
-    expect(blocked).toBeDefined()
-    // 第 2 次（不声称改文件的简单交付）应该通过
-    const req = repos.requirements.findById(reqId)!
-    expect(req.status).toBe('待验收')
-  })
-
-  test('V1.3: Bash exitCode != 0 时 path 不被收集 → emit_deliverable 被拒（防 LLM 跑错命令也算改过）', async () => {
-    const { services, repos, reqId, empId } = setup([
-      [
-        {
-          type: 'tool_use_stop',
-          id: 't1',
-          name: 'emit_deliverable',
-          args: {
-            summary: '改动 SomeRequest.java',
-            contentText: '改了 SomeRequest.java',
-          },
-        },
-        { type: 'message_stop', reason: 'tool_use' },
-      ],
-    ])
-    assignRequirement(services, reqId, empId, { skipClarification: true })
-    const thread = repos.threads.findByRequirement(reqId)!
-    // Bash 命令含 path，但 exitCode=1（如 sed 找不到文件）
-    repos.messages.append({
-      threadId: thread.id,
-      role: 'assistant',
-      type: 'tool_call',
-      content: {
-        type: 'tool_call',
-        name: 'Bash',
-        callId: 'c1',
-        args: { command: `sed -i '' 's/X/Y/g' /no/such/SomeRequest.java` },
-      },
-    })
-    repos.messages.append({
-      threadId: thread.id,
-      role: 'tool',
-      type: 'tool_result',
-      content: {
-        type: 'tool_result',
-        callId: 'c1',
-        ok: true, // 注意：tool 本身没抛错（ok=true），但内层 exitCode=1
-        value: {
-          exitCode: 1,
-          stdout: '',
-          stderr: 'No such file',
-          durationMs: 50,
-          truncated: false,
-        },
-      },
-    })
-    await executeRequirement(reqId, services)
-    // claimed path 没有任何成功 Bash 命令承接 → 应被拒，不进待验收
-    expect(repos.requirements.findById(reqId)!.status).not.toBe('待验收')
     const msgs = repos.messages.listByThread(thread.id)
     const blocked = msgs.find(
       (m) =>
@@ -632,175 +561,7 @@ describe('executeRequirement', () => {
         m.type === 'error' &&
         ((m.contentJson as { message?: string }).message ?? '').includes('emit_deliverable 已阻止'),
     )
-    expect(blocked).toBeDefined()
-  })
-
-  test('V1.3: Bash 命令 zsh 解析失败（unmatched quote）→ exitCode=1 → path 不算改过', async () => {
-    const { services, repos, reqId, empId } = setup([
-      [
-        {
-          type: 'tool_use_stop',
-          id: 't1',
-          name: 'emit_deliverable',
-          args: {
-            summary: '已修改 Foo.java',
-            contentText: '改了 Foo.java',
-          },
-        },
-        { type: 'message_stop', reason: 'tool_use' },
-      ],
-    ])
-    assignRequirement(services, reqId, empId, { skipClarification: true })
-    const thread = repos.threads.findByRequirement(reqId)!
-    // LLM 写出了 JSON escape 错误的命令（结尾多了一个引号），实际 cmd 含 Foo.java 但 shell 解析失败
-    repos.messages.append({
-      threadId: thread.id,
-      role: 'assistant',
-      type: 'tool_call',
-      content: {
-        type: 'tool_call',
-        name: 'Bash',
-        callId: 'c1',
-        args: { command: `find /path -name "Foo.java""` },
-      },
-    })
-    repos.messages.append({
-      threadId: thread.id,
-      role: 'tool',
-      type: 'tool_result',
-      content: {
-        type: 'tool_result',
-        callId: 'c1',
-        ok: true,
-        value: {
-          exitCode: 1,
-          stdout: '',
-          stderr: 'zsh:1: unmatched "',
-          durationMs: 100,
-          truncated: false,
-        },
-      },
-    })
-    await executeRequirement(reqId, services)
-    expect(repos.requirements.findById(reqId)!.status).not.toBe('待验收')
-  })
-
-  test('V1.3: 同一 path 既出现在失败命令也出现在成功命令 → 收集放行（LLM 重试成功）', async () => {
-    const { services, repos, reqId, empId } = setup([
-      [
-        {
-          type: 'tool_use_stop',
-          id: 't1',
-          name: 'emit_deliverable',
-          args: { summary: '改动 X.java', contentText: '已改 X.java' },
-        },
-        { type: 'message_stop', reason: 'tool_use' },
-      ],
-    ])
-    assignRequirement(services, reqId, empId, { skipClarification: true })
-    const thread = repos.threads.findByRequirement(reqId)!
-    // 第 1 次失败
-    repos.messages.append({
-      threadId: thread.id,
-      role: 'assistant',
-      type: 'tool_call',
-      content: {
-        type: 'tool_call',
-        name: 'Bash',
-        callId: 'c1',
-        args: { command: `sed -i '' 's/a/b/' /wrong/X.java` },
-      },
-    })
-    repos.messages.append({
-      threadId: thread.id,
-      role: 'tool',
-      type: 'tool_result',
-      content: {
-        type: 'tool_result',
-        callId: 'c1',
-        ok: true,
-        value: {
-          exitCode: 1,
-          stdout: '',
-          stderr: 'No such file',
-          durationMs: 50,
-          truncated: false,
-        },
-      },
-    })
-    // 第 2 次成功（不同绝对路径，但同 basename X.java）
-    repos.messages.append({
-      threadId: thread.id,
-      role: 'assistant',
-      type: 'tool_call',
-      content: {
-        type: 'tool_call',
-        name: 'Bash',
-        callId: 'c2',
-        args: { command: `sed -i '' 's/a/b/' /correct/X.java` },
-      },
-    })
-    repos.messages.append({
-      threadId: thread.id,
-      role: 'tool',
-      type: 'tool_result',
-      content: {
-        type: 'tool_result',
-        callId: 'c2',
-        ok: true,
-        value: { exitCode: 0, stdout: '', stderr: '', durationMs: 30, truncated: false },
-      },
-    })
-    await executeRequirement(reqId, services)
-    expect(repos.requirements.findById(reqId)!.status).toBe('待验收')
-  })
-
-  test('V1.3 (Bash 透传版): 声称的文件出现在成功的 Bash 命令里 → 允许 emit_deliverable', async () => {
-    const { services, repos, reqId, empId } = setup([
-      [
-        {
-          type: 'tool_use_stop',
-          id: 't1',
-          name: 'emit_deliverable',
-          args: {
-            summary: '改动 CardChannelTypeEnum.java',
-            contentText: '改了 CardChannelTypeEnum.java',
-          },
-        },
-        { type: 'message_stop', reason: 'tool_use' },
-      ],
-    ])
-    assignRequirement(services, reqId, empId, { skipClarification: true })
-
-    // 预先写一对 tool_call + tool_result：Bash 命令含 path，exitCode=0
-    const thread = repos.threads.findByRequirement(reqId)!
-    repos.messages.append({
-      threadId: thread.id,
-      role: 'assistant',
-      type: 'tool_call',
-      content: {
-        type: 'tool_call',
-        name: 'Bash',
-        callId: 'pre',
-        args: {
-          command: `sed -i '' 's/F24/F24,NEW/g' /some/abs/path/CardChannelTypeEnum.java`,
-        },
-      },
-    })
-    repos.messages.append({
-      threadId: thread.id,
-      role: 'tool',
-      type: 'tool_result',
-      content: {
-        type: 'tool_result',
-        callId: 'pre',
-        ok: true,
-        value: { exitCode: 0, stdout: '', stderr: '', durationMs: 50, truncated: false },
-      },
-    })
-
-    await executeRequirement(reqId, services)
-    expect(repos.requirements.findById(reqId)!.status).toBe('待验收')
+    expect(blocked).toBeUndefined()
   })
 
   test('V1.4: LLM 429 错误自动退避重试，不立即 system_pause', async () => {
