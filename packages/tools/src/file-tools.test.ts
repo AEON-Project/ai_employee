@@ -17,7 +17,13 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { bashTool, FILE_TOOL_NAMES, FILE_TOOLS } from './file-tools.js'
+import {
+  bashTool,
+  processTool,
+  FILE_TOOL_NAMES,
+  FILE_TOOLS,
+  _resetSessionsForTest,
+} from './file-tools.js'
 import type { ToolContext } from './types.js'
 
 function makeCtx(): ToolContext {
@@ -42,9 +48,9 @@ afterEach(() => {
 })
 
 describe('FILE_TOOLS 导出', () => {
-  test('只暴露 1 个工具 (Bash)', () => {
-    expect(FILE_TOOLS).toHaveLength(1)
-    expect(FILE_TOOL_NAMES).toEqual(['Bash'])
+  test('暴露 2 个工具：Bash + Process', () => {
+    expect(FILE_TOOLS).toHaveLength(2)
+    expect(FILE_TOOL_NAMES).toEqual(['Bash', 'Process'])
   })
 })
 
@@ -130,5 +136,95 @@ describe('Bash', () => {
     expect(existsSync(join(workDir, 'restricted'))).toBe(true)
     await bashTool.invoke({ command: 'rm -rf restricted' }, makeCtx())
     expect(existsSync(join(workDir, 'restricted'))).toBe(false)
+  })
+
+  test('env 字段：临时环境变量生效', async () => {
+    const r = await bashTool.invoke(
+      { command: 'echo $AIEMP_TEST_VAR', env: { AIEMP_TEST_VAR: 'hello-env' } },
+      makeCtx(),
+    )
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout.trim()).toBe('hello-env')
+  })
+
+  test('completed 状态字段', async () => {
+    const r = await bashTool.invoke({ command: 'echo ok' }, makeCtx())
+    expect(r.status).toBe('completed')
+    expect(r.sessionId).toBeUndefined()
+  })
+
+  test('failed 状态字段（非 0 退出码）', async () => {
+    const r = await bashTool.invoke({ command: 'exit 3' }, makeCtx())
+    expect(r.status).toBe('failed')
+    expect(r.exitCode).toBe(3)
+  })
+})
+
+describe('Bash background + Process', () => {
+  afterEach(() => _resetSessionsForTest())
+
+  test('background=true 立即返回 running + sessionId', async () => {
+    const r = await bashTool.invoke({ command: 'sleep 2', background: true }, makeCtx())
+    expect(r.status).toBe('running')
+    expect(typeof r.sessionId).toBe('string')
+    expect(r.exitCode).toBeNull()
+  })
+
+  test('yield_ms 短超时 → 返回 running + sessionId', async () => {
+    const r = await bashTool.invoke({ command: 'sleep 1', yield_ms: 100 }, makeCtx())
+    expect(r.status).toBe('running')
+    expect(typeof r.sessionId).toBe('string')
+  })
+
+  test('Process read 后台进程：等其结束后能拿到累计 stdout + exitCode=0', async () => {
+    const startR = await bashTool.invoke(
+      { command: 'echo line1; sleep 0.2; echo line2', background: true },
+      makeCtx(),
+    )
+    expect(startR.status).toBe('running')
+    const sid = startR.sessionId!
+    // 等够时间让 sleep 完成
+    await new Promise((r) => setTimeout(r, 500))
+    const readR = await processTool.invoke({ sessionId: sid, action: 'read' }, makeCtx())
+    expect(readR.status).toBe('completed')
+    expect(readR.exitCode).toBe(0)
+    expect(readR.stdout).toContain('line1')
+    expect(readR.stdout).toContain('line2')
+  })
+
+  test('Process status：不读输出', async () => {
+    const startR = await bashTool.invoke(
+      { command: 'echo hi; sleep 0.3', background: true },
+      makeCtx(),
+    )
+    const sid = startR.sessionId!
+    const statusR = await processTool.invoke({ sessionId: sid, action: 'status' }, makeCtx())
+    expect(statusR.status).toBe('running')
+    expect(statusR.stdout).toBeUndefined()
+    expect(statusR.stderr).toBeUndefined()
+    // 清理
+    await processTool.invoke({ sessionId: sid, action: 'kill' }, makeCtx())
+  })
+
+  test('Process kill：SIGKILL 后台进程', async () => {
+    const startR = await bashTool.invoke({ command: 'sleep 30', background: true }, makeCtx())
+    const sid = startR.sessionId!
+    const killR = await processTool.invoke({ sessionId: sid, action: 'kill' }, makeCtx())
+    expect(killR.status).toBe('killed')
+  })
+
+  test('Process 未知 sessionId → status=unknown', async () => {
+    const r = await processTool.invoke({ sessionId: 'no-such-session' }, makeCtx())
+    expect(r.status).toBe('unknown')
+  })
+
+  test('read 已完成的 session 一次后从 registry 清除', async () => {
+    const startR = await bashTool.invoke({ command: 'echo done', background: true }, makeCtx())
+    const sid = startR.sessionId!
+    await new Promise((r) => setTimeout(r, 200))
+    const r1 = await processTool.invoke({ sessionId: sid, action: 'read' }, makeCtx())
+    expect(r1.status).toBe('completed')
+    const r2 = await processTool.invoke({ sessionId: sid, action: 'read' }, makeCtx())
+    expect(r2.status).toBe('unknown')
   })
 })
