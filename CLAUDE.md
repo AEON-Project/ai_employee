@@ -4,7 +4,140 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目定位
 
-单用户本地运行的 **AI 数字员工引擎**：把"对话/指令"换成"组织 + 岗位 + 工单"心智模型。详见 [PRD_V1.md](./PRD_V1.md) 与 [ARCHITECTURE.md](./ARCHITECTURE.md)。α + β 两阶段已交付（见 [ALPHA_TASKS.md §0](./ALPHA_TASKS.md)）。
+单用户本地运行的 **AI 数字员工引擎**：把"对话/指令"换成"组织 + 岗位 + 工单"心智模型。详见 [PRD_V1.md](./PRD_V1.md) 与 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+
+---
+
+## 产品需求
+
+### 当前版本：V1.0（引擎验证版 — 已完成）
+
+**目标**：验证"配置过技能和人设的 AI 员工，接到项目内的需求，能否在『澄清前置 + 过程透明 + 记忆沉淀 + 纠错学习』机制下完成任务，且下次同类任务做得更好"。
+
+**核心机制**：
+1. **澄清前置**：员工接单先复述理解 + 列拆解 + 提问，确认后才动手
+2. **过程透明**：思维链 + 当前步骤 + 下一步计划三栏实时可见
+3. **纠错沉淀**：失败 / 返工 / 差评自动复盘，写入个人教训 + 项目踩坑库
+
+**V1.0 范围（已交付）**：
+- 单用户本地 CLI；用户自带 LLM Key；不商业化
+- 四大实体：员工 / 技能 / 需求 / 项目 + Report 沉淀产物
+- 三种入口：浏览器 UI / Telegram bot / CLI
+- Anthropic + OpenAI 兼容协议双 provider
+
+**V1.0 验收线**：PRD §12 #1–#6 端到端通过（已 ✅，6/6）+ 4 个量化指标采样工具就位（待真实数据采集）。
+
+**V1.0 明确不做**（见 PRD §11）：
+- 商业化 / 多用户 / 团队协作 / 计费
+- 仪表盘 / 日报周报
+- Trigger 事件驱动 / Integration 第三方 SaaS / MCP
+- 完整 codebase 索引 / Git/PR 集成 / Computer Use
+- 跨项目共享 Brain
+- 移动端 / 多模态 / 国际化
+
+如发现以上任何一项是"必须做"的，需走变更评审，不能直接加。
+
+### 已知 V1.1+ 候选（按 [ALPHA_TASKS.md §13](./ALPHA_TASKS.md#13-后续路线)）
+
+- Replay 批量 + LLM-as-judge 自动评分
+- 跨项目共享 Brain
+- Trigger 事件驱动（邮件 / 定时器 / Webhook 触发员工自主工作）
+- Integration 生态（Gmail / Slack / HubSpot / OAuth）
+- 完整 codebase 索引 / AST 解析 / Git/PR/CI 集成
+- 多模态（图像 / 语音）
+
+---
+
+## 当前开发任务进度
+
+### 已交付（按 git commit 时间正序）
+
+| commit | 内容 | 对应文档 |
+|---|---|---|
+| `b584234` | initial: V1.0 引擎验证版（α + β + W0–W4 共 45 个工单一次性落地） | ALPHA_TASKS §0–7 |
+| `824382c` | docs(alpha-tasks): 标记开发状态 | — |
+| `f3aefa7` | docs(readme): 重写 README | — |
+| `11b812b` | fix(cli): `backup` 命令父目录缺失 | — |
+| `65ff4ae` | feat(config): 支持 `.env` 配置（Bun 自动加载，三层覆盖） | README §3.1 |
+| `1900da7` | feat(credentials): `env://` 引用协议（modelKeyRef） | — |
+| `1ad538c` | feat(env-ref): `env://` 扩展到 model/baseUrl 字段 | .env.example |
+| `527153e` | feat(cli): `./ai-emp` shell wrapper | README |
+| `67581e6` | docs(readme): 快速开始改走 .env 路径 | — |
+| `f69a6f6` | feat(cli/init): 下一步提示上下文感知 | — |
+| `663d4cc` | feat(seed): 5 员工角色（后端/前端/测试/产品/UI 设计）+ 输出清晰化 | — |
+| `dcf573b` | fix(seed): `--reset` 真删（不是 archive） | — |
+| `f0d8f43` | docs(claude): 加 CLAUDE.md | 本文件 |
+
+### 进行中
+
+_无_
+
+### 待办（含新需求）
+
+_无；接到新需求请按下方"AI 协作工作流"§ A 加到这里_
+
+---
+
+## AI 协作工作流（**重要**：未来 AI 实例必读）
+
+CLAUDE.md 是项目"知识沉淀 + 进度状态"的单一真相源。每次有需求 / 完成开发后，**必须更新本文件**对应段。
+
+### A. 接到新需求
+
+加到上方"待办"区，格式：
+
+```markdown
+- **<需求标题>** （来源：<用户原话日期>）
+  - 描述：1-2 句说清楚做什么、为什么
+  - 验收：可观测的产出（如 "ai-emp seed --reset 后 active=5, archived=0"）
+  - 影响范围：列出预计涉及的包 / 文件
+```
+
+需求 ≠ 一定要做。先评估是否在 V1.0 范围内：
+- 在范围 → 加到待办，按优先级排序
+- 超 V1.0 / 命中"明确不做" → 回复用户解释，请用户决策"现做 / 推 V1.1 / 不做"
+- 紧急 bug → 直接做，事后归档到"已交付"
+
+### B. 开始开发任务
+
+1. 把任务从"待办"移到"进行中"
+2. 在条目里写"开始日期 + 计划影响范围"
+3. 同时考虑是否要更新 [PRD_V1.md](./PRD_V1.md) 或 [ARCHITECTURE.md](./ARCHITECTURE.md)（结构性变化必须更新）
+
+### C. 完成开发
+
+每个**有意义的工作单元**（功能 / bug 修复 / 重构）必须：
+
+1. **跑全套**：`bun run typecheck && bun test`，全 pass 才提交
+2. **跑 format**：`bun run format`
+3. **git commit + push**：用 `feat:` / `fix:` / `docs:` / `refactor:` / `chore:` / `style:` 前缀
+4. **拿到 commit hash**：`git rev-parse --short HEAD`
+5. **回写 CLAUDE.md**：把任务从"进行中"挪到"已交付"，必须带 `<commit hash>` 列
+
+### D. 完成示例
+
+```markdown
+| `abc1234` | feat(memory): 双向沉淀加 LLM-as-judge 置信度（PRD §6.1） | ARCHITECTURE §11.4 |
+```
+
+如果工作跨多个 commit，列最后一个收口的 hash 即可，多个 commit 用 `abc1234..def5678` 表示范围。
+
+### E. 变更产品需求
+
+修改 PRD 范围时（罕见，需用户明确同意）：
+- 更新 [PRD_V1.md](./PRD_V1.md) 对应段
+- 在本文件"V1.0 范围 / 明确不做"段同步
+- commit message 用 `docs(prd):` 前缀
+
+### F. 不允许的捷径
+
+- **不允许**绕过状态机 / 事件总线（见下方"架构决策"）
+- **不允许**改 DB schema 不写 migration
+- **不允许**为图省事把 secret 写进 DB
+- **不允许**让 `core` 反向依赖 `server` / `cli` / `bridge-tg`
+- **不允许**在 git commit message 里写中文以外的占位（如 `WIP`），必须有可追溯的具体描述
+
+---
 
 ## 运行时与工具链
 
@@ -104,9 +237,9 @@ LLM **不**维护全局历史。每轮 prompt 由 `packages/core/src/prompt/comp
 
 ## 重要约定
 
-- **添加新功能前**：检查 [ALPHA_TASKS.md §0](./ALPHA_TASKS.md) 看 α + β 已交付 / 已延后到 V1.1+ 的清单，避免重复工作
+- **添加新功能前**：检查上方"已交付"清单和 [ALPHA_TASKS.md §0](./ALPHA_TASKS.md) 看是否已做，避免重复
 - **修 schema** 必须加 migration 文件到 `packages/storage/migrations/NNNN_*.sql`（按文件名字典序应用），不允许 hot patch DB
-- **不要**给 `RequirementsRepo.setStatus` 改签名为绕过状态机
+- **不要**给 `RequirementsRepo.setStatus` 改签名绕过状态机
 - 测试用 `:memory:` SQLite + `InMemoryKeychainStore` + scripted mock LLM；模板见 `packages/server/src/e2e.test.ts`
 - TG bridge 是 EventBus 订阅者 + grammY long-polling，**core 不感知它**；加新通道（Lark/Slack）参考此模式
 - `seed --reset` 用 raw SQL 真删（不是 archive），实现见 `packages/cli/src/seed.ts`
@@ -120,11 +253,13 @@ LLM **不**维护全局历史。每轮 prompt 由 `packages/core/src/prompt/comp
 
 ## 参考文档
 
-| 文件 | 用途 |
-|---|---|
-| [PRD_V1.md](./PRD_V1.md) | 产品需求、数据模型、流程、验收线 |
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | 技术架构、模块边界、状态机、事件目录、DB schema |
-| [ALPHA_TASKS.md](./ALPHA_TASKS.md) | 工单清单 + 当前开发状态 + 后续路线 |
-| [SPIKE_RESULTS.md](./SPIKE_RESULTS.md) | W0 技术验证（sqlite-vec / transformers.js / LLM SDK 兼容性） |
-| [GETTING_STARTED.md](./GETTING_STARTED.md) | 用户向导：install → 完成首个需求 |
-| [README.md](./README.md) | 项目对外介绍 + 三种入口（浏览器 / TG / CLI） |
+| 文件 | 用途 | 谁该读 |
+|---|---|---|
+| [PRD_V1.md](./PRD_V1.md) | 产品需求、数据模型、流程、验收线 | 产品决策 / 改 V1 范围时 |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | 技术架构、模块边界、状态机、事件目录、DB schema | 二次开发 / 改结构时 |
+| [ALPHA_TASKS.md](./ALPHA_TASKS.md) | 工单清单 + α/β 状态 + 后续路线 | 详细进度 / 任务依赖 |
+| [SPIKE_RESULTS.md](./SPIKE_RESULTS.md) | W0 技术验证（sqlite-vec / transformers.js / LLM SDK 兼容性） | 排错 / 平台移植 |
+| [GETTING_STARTED.md](./GETTING_STARTED.md) | 用户向导：install → 完成首个需求 | 新用户 |
+| [README.md](./README.md) | 项目对外介绍 + 三种入口 | 项目入门 |
+
+> **CLAUDE.md（本文件）是 AI 协作的入口**：含产品需求摘要 + 进度状态 + 工作流约定。每次完成开发必须更新"已交付"段。
