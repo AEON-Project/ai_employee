@@ -158,6 +158,33 @@ describe('Bash', () => {
     expect(r.status).toBe('failed')
     expect(r.exitCode).toBe(3)
   })
+
+  // ── V2 O7: PTY ──────────────────────────────────────────────
+  test('V2 O7 pty=true：命令在伪 tty 内运行（isatty 返回 true）', async () => {
+    const r = await bashTool.invoke(
+      // 用 sh 测试 tty 检测；macOS / Linux 都支持
+      { command: '[ -t 1 ] && echo TTY_YES || echo TTY_NO', pty: true },
+      makeCtx(),
+    )
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout).toContain('TTY_YES')
+  })
+
+  test('V2 O7 pty=false（默认）：命令在普通 pipe 下运行（isatty=false）', async () => {
+    const r = await bashTool.invoke(
+      { command: '[ -t 1 ] && echo TTY_YES || echo TTY_NO' },
+      makeCtx(),
+    )
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout).toContain('TTY_NO')
+  })
+
+  test('V2 O7 pty=true 命令正确执行 + 立即结束（不卡 stdin）', async () => {
+    const r = await bashTool.invoke({ command: 'echo via-pty', pty: true }, makeCtx())
+    expect(r.exitCode).toBe(0)
+    // macOS script 会前缀 ^D；只断言 echo 内容存在
+    expect(r.stdout).toContain('via-pty')
+  })
 })
 
 describe('Bash background + Process', () => {

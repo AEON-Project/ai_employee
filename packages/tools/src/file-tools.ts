@@ -72,6 +72,10 @@ const BashArgsZ = z.object({
   timeout_ms: z.number().int().positive().max(600_000).optional(),
   yield_ms: z.number().int().nonnegative().max(600_000).optional(),
   background: z.boolean().optional(),
+  /** V2 O7 PTY: true 时用 `script` 包装命令获得伪 tty（适合 isTTY-checking 命令如 mvn /
+   *  ./gradlew / 部分 npm install 进度条 / git rebase 等）。macOS / Linux 都支持。
+   *  代价：输出可能多 ^D / 控制字符（LLM 通常能容忍）。 */
+  pty: z.boolean().optional(),
 })
 type BashArgs = z.infer<typeof BashArgsZ>
 
@@ -139,6 +143,11 @@ export const bashTool: ToolDef<BashArgs, BashResult> = {
         type: 'boolean',
         description: 'true=立即后台（等价 yield_ms=0）',
       },
+      pty: {
+        type: 'boolean',
+        description:
+          'V2 O7: true=给命令一个伪 tty（用 `script` 包装），让 mvn / gradlew / 部分 npm install 等检测 isTTY 的命令能正常输出。代价：输出多 ^D 前缀 / 控制字符。',
+      },
     },
     required: ['command'],
     additionalProperties: false,
@@ -156,7 +165,41 @@ export const bashTool: ToolDef<BashArgs, BashResult> = {
     const t0 = Date.now()
     const sessionId = randomUUID()
 
-    const child = spawn('zsh', ['-lc', args.command], { cwd, env: childEnv })
+    // V2 O7 PTY: 用 `script` 包装命令获得伪 tty。
+    //   macOS: script -q /dev/null /bin/sh -c '<cmd>'  （需 stdin=/dev/null，否则 script 抱怨）
+    //   Linux util-linux: script -q -c '<cmd>' /dev/null
+    //   平台不识别时 fallback 到普通 spawn
+    let spawnCmd: string
+    let spawnArgs: string[]
+    const spawnOpts: {
+      cwd: string
+      env: NodeJS.ProcessEnv
+      stdio?: ['ignore' | 'pipe', 'pipe', 'pipe']
+    } = {
+      cwd,
+      env: childEnv,
+    }
+    if (args.pty) {
+      if (process.platform === 'darwin') {
+        // 通过 zsh -c 间接调用，让 < /dev/null 重定向生效
+        spawnCmd = 'zsh'
+        spawnArgs = [
+          '-c',
+          `script -q /dev/null /bin/sh -c ${JSON.stringify(args.command)} < /dev/null`,
+        ]
+      } else if (process.platform === 'linux') {
+        spawnCmd = 'zsh'
+        spawnArgs = ['-c', `script -q -c ${JSON.stringify(args.command)} /dev/null < /dev/null`]
+      } else {
+        log.warn('pty.unsupported_platform', { platform: process.platform, sessionId })
+        spawnCmd = 'zsh'
+        spawnArgs = ['-lc', args.command]
+      }
+    } else {
+      spawnCmd = 'zsh'
+      spawnArgs = ['-lc', args.command]
+    }
+    const child = spawn(spawnCmd, spawnArgs, spawnOpts)
     const session: ProcessSession = {
       id: sessionId,
       command: args.command,
