@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`ec9195e` feat(checkpoint): V2 O4 Checkpoint 回滚 — 工单 baseline 自动建快照（git + tar 双后端）+ checkpoint 系统 tool 主动建 + reject 时 UI 可选回滚；非 git 项目也安全
+> 最近：`a7c7490` feat(cron): V2 O5 Cron 定时工单 — cronSpec 非空 = 模板，scheduler 每 60s 扫到期就创建 child 派给同员工；支持 every/daily/weekly 简化语法
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
