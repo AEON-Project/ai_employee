@@ -12,10 +12,13 @@
 import { existsSync, statSync } from 'node:fs'
 import { join, normalize, resolve } from 'node:path'
 import { Hono } from 'hono'
+import { getLogger } from '@ai-emp/domain'
 import { authHandler, hostGuard, tokenAuth } from './auth.js'
 import type { RuntimeServices } from '@ai-emp/core/runtime'
 import { mountApi } from './api.js'
 import { makeWsHandlers, mountWs } from './ws.js'
+
+const log = getLogger('server.http')
 
 /** 调度器接口（运行时实际是 RequirementScheduler；这里只暴露 enqueue 给 api 用，避免循环依赖） */
 export interface SchedulerLike {
@@ -39,6 +42,22 @@ export interface CreateServerOptions extends ServerDeps {
 export function buildApp(deps: ServerDeps) {
   const app = new Hono()
   app.use('*', hostGuard())
+  // access log — info 级别记 method/path/status/ms；debug 加 query
+  app.use('*', async (c, next) => {
+    const start = performance.now()
+    await next()
+    const ms = Math.round(performance.now() - start)
+    const path = c.req.path
+    // 静态资源 / health 不记，减噪
+    if (path === '/health' || /\.(js|css|map|svg|png|ico)$/.test(path)) return
+    log.info('req', {
+      method: c.req.method,
+      path,
+      status: c.res.status,
+      ms,
+      query: c.req.url.includes('?') ? c.req.url.split('?')[1] : undefined,
+    })
+  })
   app.get('/health', (c) => c.json({ ok: true, version: '0.0.0' }))
   app.get('/auth', authHandler({ token: deps.token }))
   app.use('*', tokenAuth({ token: deps.token, publicPaths: ['/auth', '/health'] }))

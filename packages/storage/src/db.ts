@@ -9,9 +9,12 @@
 import { Database } from 'bun:sqlite'
 import * as sqliteVec from 'sqlite-vec'
 import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite'
+import { getLogger } from '@ai-emp/domain'
 import * as schema from './schema.js'
 
 export type DB = BunSQLiteDatabase<typeof schema>
+
+const sqlLog = getLogger('storage.sql')
 
 export interface OpenOptions {
   /** 数据库文件绝对路径；':memory:' 表示纯内存（仅测试） */
@@ -62,7 +65,16 @@ export function openDatabase(opts: OpenOptions): { db: DB; sqlite: Database } {
   sqliteVec.load(sqlite)
   applyStartupPragmas(sqlite)
 
-  const db = drizzle(sqlite, { schema })
+  // SQL 日志：drizzle 内置 logger 接口；仅在 AIEMP_LOG_LEVEL=debug 时实际落盘
+  // （logger 内部按级别过滤，这里始终启用 hook 性能开销可忽略）
+  const db = drizzle(sqlite, {
+    schema,
+    logger: {
+      logQuery: (query, params) => {
+        sqlLog.debug('query', { sql: query, params })
+      },
+    },
+  })
   return { db, sqlite }
 }
 

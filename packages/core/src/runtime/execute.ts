@@ -16,8 +16,16 @@
  *   ⑤ Persist runtime_state + emit frame
  */
 
-import { type Plan, type RequirementId, type PauseReason, type BudgetUsed } from '@ai-emp/domain'
+import {
+  getLogger,
+  type Plan,
+  type RequirementId,
+  type PauseReason,
+  type BudgetUsed,
+} from '@ai-emp/domain'
 import { resolveEnvRef, resolveEnvRefStrict } from '@ai-emp/storage'
+
+const log = getLogger('runtime.execute')
 import { BudgetTracker } from './budget.js'
 import { transition } from './state-machine.js'
 import { composeMinimalPrompt } from './prompt-minimal.js'
@@ -153,6 +161,25 @@ export async function executeRequirement(
     let saw_stop = false
 
     const cacheBp = (prompt as unknown as { cacheBreakpoints?: number[] }).cacheBreakpoints
+    const llmT0 = performance.now()
+    log.info('llm.call.start', {
+      reqId,
+      employeeId: employee.id,
+      model: resolvedModel,
+      provider: employee.modelProvider,
+      systemBlocks: prompt.system.length,
+      messages: prompt.messages.length,
+      tools: tools.length,
+      iteration: execState.currentStep,
+    })
+    log.debug('llm.call.request', {
+      reqId,
+      system: prompt.system,
+      messages: prompt.messages,
+      toolNames: tools.map((t) => t.name),
+    })
+    let chunkCount = 0
+    let firstChunkMs: number | undefined
     for await (const chunk of llm.stream({
       system: prompt.system,
       messages: prompt.messages,
@@ -161,6 +188,11 @@ export async function executeRequirement(
       ...(employee.modelTemperature == null ? {} : { temperature: employee.modelTemperature }),
       ...(employee.modelMaxTokens == null ? {} : { maxTokens: employee.modelMaxTokens }),
     })) {
+      chunkCount++
+      if (chunkCount === 1) {
+        firstChunkMs = Math.round(performance.now() - llmT0)
+        log.info('llm.call.first_chunk', { reqId, firstChunkMs, chunkType: chunk.type })
+      }
       const out = handleChunk(chunk, { thread, repos, bus, reqId, threadId: thread.id, budget })
       if (out.kind === 'tool') {
         decision = out.call
@@ -174,9 +206,20 @@ export async function executeRequirement(
       if (out.kind === 'stop') saw_stop = true
       if (decision) break
     }
+    const llmMs = Math.round(performance.now() - llmT0)
     if (llmError) {
+      log.error('llm.call.error', { reqId, error: llmError, ms: llmMs, chunks: chunkCount })
       return systemPause(services, reqId, 'llm_error', llmError)
     }
+    log.info('llm.call.end', {
+      reqId,
+      ms: llmMs,
+      firstChunkMs,
+      chunks: chunkCount,
+      decision: decision?.name ?? (saw_stop ? 'stop' : 'unknown'),
+      textLen: textBuf.length,
+    })
+    log.debug('llm.call.response', { reqId, decision, textBuf })
     if (!decision && saw_stop && textBuf) {
       // 隐式 advance_step：把累积文本视为本步 summary
       decision = {
@@ -483,6 +526,7 @@ function systemPause(
 ): { exit: 'paused' } {
   const req = services.repos.requirements.findById(reqId)
   if (!req) return { exit: 'paused' }
+  log.warn('system_pause', { reqId, from: req.status, reason, detail })
   const t = transition(req.status, { kind: 'system_pause', reason })
   services.repos.requirements.setStatus(reqId, t.to)
   // 把错误原因写进 messages 表，UI 思维链可见 — 否则用户看到的是「状态变回已暂停 + 思维链无消息」体验

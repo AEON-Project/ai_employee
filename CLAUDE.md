@@ -58,7 +58,9 @@ CLAUDE.md 是 AI 协作的入口。**每次完成开发后必须**：
 
 完整工作流 → [docs/ai/WORKFLOW.md](./docs/ai/WORKFLOW.md)（A–G 章节：接需求 / 开始 / 完成 / 验证 / 变更 PRD / 不允许的捷径 / 文档维护层级）
 
-UI / WS / API 改动必走视觉验证 → [docs/ai/DEBUGGING.md](./docs/ai/DEBUGGING.md)（浏览器自动化 + `browser_navigate`）
+UI / WS / API 改动必走视觉验证 → [docs/ai/DEBUGGING.md](./docs/ai/DEBUGGING.md)（playwright MCP + 浏览器 / curl / sqlite3 / 日志四件套）
+
+**日志先行**：排查问题第一步永远是 `tail ~/.ai-emp/logs/YYYY-MM-DD.log`，不是肉眼看 UI 或加 `console.log`。日志缺时**回头补埋点 + 同步更新 DEBUGGING.md §4.5 §6**（详见该文顶部「⚡ 工程纪律」段）。
 
 ---
 

@@ -10,7 +10,9 @@
 import type { TypedEventBus, EventMap } from '@ai-emp/events'
 import { executeRequirement } from './execute.js'
 import type { RuntimeServices } from './services.js'
-import type { RequirementId } from '@ai-emp/domain'
+import { getLogger, type RequirementId } from '@ai-emp/domain'
+
+const log = getLogger('scheduler')
 
 export interface SchedulerOptions {
   /** α=1；β 阶段可放大 */
@@ -51,9 +53,16 @@ export class RequirementScheduler {
   }
 
   enqueue(reqId: RequirementId): void {
-    if (this.active.has(reqId)) return
-    if (this.queue.includes(reqId)) return
+    if (this.active.has(reqId)) {
+      log.debug('enqueue.skip', { reqId, reason: 'already_active' })
+      return
+    }
+    if (this.queue.includes(reqId)) {
+      log.debug('enqueue.skip', { reqId, reason: 'already_queued' })
+      return
+    }
     this.queue.push(reqId)
+    log.info('enqueue', { reqId, queueSize: this.queue.length, active: this.active.size })
     this.emitState()
     this.pump()
   }
@@ -79,12 +88,18 @@ export class RequirementScheduler {
   }
 
   private async runOne(reqId: RequirementId): Promise<void> {
+    const t0 = performance.now()
+    log.info('run.start', { reqId })
     try {
       await this.runOnce(reqId)
+      log.info('run.end', { reqId, ms: Math.round(performance.now() - t0) })
     } catch (e) {
-      // 已由 execute 内部处理；这里只做兜底
-      // eslint-disable-next-line no-console
-      console.error('[scheduler] runOne unexpected:', e)
+      log.error('run.unexpected', {
+        reqId,
+        error: e instanceof Error ? e.message : String(e),
+        stack: e instanceof Error ? e.stack : undefined,
+        ms: Math.round(performance.now() - t0),
+      })
     } finally {
       this.active.delete(reqId)
       this.emitState()
