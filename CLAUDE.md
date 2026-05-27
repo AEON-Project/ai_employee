@@ -68,6 +68,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `dcf573b` | fix(seed): `--reset` 真删（不是 archive） | — |
 | `f0d8f43` | docs(claude): 加 CLAUDE.md | 本文件 |
 | `6ade242` | docs(claude): CLAUDE.md 加产品需求 + 进度状态 + AI 协作工作流 | 本文件 |
+| `d644706` | docs(claude): 回填 6ade242 到"已交付"表（吃自己狗粮验证闭环） | 本文件 |
+| `11a36ec` | docs(claude): 加"本地端到端调试（浏览器自动化）"段 — browser_navigate MCP | 本文件 |
 
 ### 进行中
 
