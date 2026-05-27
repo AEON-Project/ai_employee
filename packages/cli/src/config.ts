@@ -10,7 +10,7 @@
  * 全套支持的 env 见 `.env.example`。
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
@@ -259,3 +259,55 @@ function formatVal(v: unknown): string {
 }
 
 export { DEFAULT_CONFIG }
+
+// ──────────────────────────────────────────────────────────────
+// V2 O6 MCP server 配置 — dataDir/mcp.json
+// ──────────────────────────────────────────────────────────────
+export interface McpJsonServer {
+  name: string
+  command: string
+  args?: string[]
+  env?: Record<string, string>
+  startupTimeoutMs?: number
+}
+
+export interface McpJsonConfig {
+  servers: McpJsonServer[]
+}
+
+export function mcpConfigPath(): string {
+  return join(dataDir(), 'mcp.json')
+}
+
+/**
+ * 读取 dataDir/mcp.json；不存在 → 返回空配置（不报错）；语法错 → 抛错。
+ * 不做严格 schema 校验（让 McpManager.connectAll 自己 warn 跳过无效项）。
+ */
+export function loadMcpConfig(): McpJsonConfig {
+  const p = mcpConfigPath()
+  if (!existsSync(p)) return { servers: [] }
+  try {
+    const raw = readFileSync(p, 'utf8')
+    const parsed = JSON.parse(raw) as Partial<McpJsonConfig>
+    const servers = Array.isArray(parsed.servers) ? parsed.servers : []
+    return {
+      servers: servers
+        .filter(
+          (s): s is McpJsonServer =>
+            typeof s === 'object' &&
+            s !== null &&
+            typeof (s as McpJsonServer).name === 'string' &&
+            typeof (s as McpJsonServer).command === 'string',
+        )
+        .map((s) => ({
+          name: s.name,
+          command: s.command,
+          args: Array.isArray(s.args) ? s.args : [],
+          env: (s.env as Record<string, string>) ?? undefined,
+          startupTimeoutMs: s.startupTimeoutMs,
+        })),
+    }
+  } catch (err) {
+    throw new Error(`mcp.json invalid JSON at ${p}: ${String(err)}`)
+  }
+}

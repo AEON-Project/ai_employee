@@ -34,9 +34,11 @@
         "@ai-emp/embedding": "workspace:*",
         "@ai-emp/events": "workspace:*",
         "@ai-emp/llm": "workspace:*",
+        "@ai-emp/mcp-client": "workspace:*",
         "@ai-emp/server": "workspace:*",
         "@ai-emp/storage": "workspace:*",
         "@ai-emp/tools": "workspace:*",
+        "zod": "^3.23.0",
       },
     },
     "packages/core": {
@@ -78,6 +80,13 @@
         "@ai-emp/domain": "workspace:*",
         "@anthropic-ai/sdk": "^0.98.0",
         "openai": "^6.39.0",
+      },
+    },
+    "packages/mcp-client": {
+      "name": "@ai-emp/mcp-client",
+      "version": "0.0.0",
+      "dependencies": {
+        "@ai-emp/domain": "workspace:*",
       },
     },
     "packages/server": {
@@ -147,6 +156,8 @@
     "@ai-emp/events": ["@ai-emp/events@workspace:packages/events"],
 
     "@ai-emp/llm": ["@ai-emp/llm@workspace:packages/llm"],
+
+    "@ai-emp/mcp-client": ["@ai-emp/mcp-client@workspace:packages/mcp-client"],
 
     "@ai-emp/server": ["@ai-emp/server@workspace:packages/server"],
 

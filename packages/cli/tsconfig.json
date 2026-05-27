@@ -14,6 +14,7 @@
     { "path": "../llm" },
     { "path": "../tools" },
     { "path": "../embedding" },
+    { "path": "../mcp-client" },
     { "path": "../server" },
     { "path": "../bridge-tg" }
   ]

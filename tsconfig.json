@@ -8,6 +8,7 @@
     { "path": "./packages/llm" },
     { "path": "./packages/tools" },
     { "path": "./packages/embedding" },
+    { "path": "./packages/mcp-client" },
     { "path": "./packages/server" },
     { "path": "./packages/bridge-tg" },
     { "path": "./packages/cli" }
