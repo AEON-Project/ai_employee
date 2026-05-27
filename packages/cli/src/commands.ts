@@ -80,7 +80,11 @@ export async function cmdInit(): Promise<number> {
   } else if (!envHasLLMKey) {
     steps.push(`# 编辑 .env 填 LLM key，如 AIEMP_ANTHROPIC_API_KEY=sk-ant-...`)
   }
-  if (employeeCount === 0) steps.push(`./ai-emp seed     # 导入 3 项目 + 5 员工 + 8 技能样板`)
+  if (employeeCount === 0) {
+    steps.push(
+      `./ai-emp seed     # 导入 3 项目 + 5 员工（后端/前端/测试/产品/UI 设计）+ 11 技能样板`,
+    )
+  }
   steps.push(`./ai-emp serve     # 启动服务`)
   for (const s of steps) console.log(`  ${s}`)
   console.log('')
@@ -338,20 +342,30 @@ export async function cmdMetrics(): Promise<number> {
 }
 
 // ──────────────────────────────────────────────────────────────
-// seed — 导入样板项目 / 员工 / 技能
+// seed — 导入样板项目 / 员工 / 技能（按名字幂等；--reset 清空重导）
 // ──────────────────────────────────────────────────────────────
-export async function cmdSeed(): Promise<number> {
-  const { seedAll } = await import('./seed.js')
+export async function cmdSeed(opts: { reset?: boolean } = {}): Promise<number> {
+  const { seedAll, seedReset } = await import('./seed.js')
   const boot = await bootServices()
   try {
-    const r = seedAll(boot.services.repos)
+    const r = opts.reset ? seedReset(boot.services.repos) : seedAll(boot.services.repos)
+
+    const skipMsg =
+      r.skipped.projects + r.skipped.employees + r.skipped.skills > 0
+        ? ` （跳过已存在：${r.skipped.projects} 项目 / ${r.skipped.employees} 员工 / ${r.skipped.skills} 技能）`
+        : ''
     console.log(
-      `✓ 已导入：${r.projects} 项目 / ${r.employees} 员工 / ${r.skills} 技能 / ${r.conventions} 规范`,
+      `✓ 新增：${r.projects} 项目 / ${r.employees} 员工 / ${r.skills} 技能 / ${r.conventions} 规范${skipMsg}`,
     )
-    if (r.employees > 0) {
-      console.log(
-        `⚠️  员工的 modelKeyRef 都是 "REPLACE_ME"。\n   请先 \`ai-emp keychain set <name> <secret>\`，再在 UI 中修改员工配置。`,
-      )
+
+    if (r.projects + r.employees + r.skills === 0 && !opts.reset) {
+      console.log('')
+      console.log('💡 全部已存在，未做改动。如需重新导入样板（覆盖同名条目）：')
+      console.log('   ./ai-emp seed --reset')
+    } else if (r.employees > 0) {
+      console.log('')
+      console.log('💡 样板员工的 modelKeyRef / modelName 都是 env://AIEMP_... 引用。')
+      console.log('   配 .env（参考 .env.example）后即可使用。')
     }
     return 0
   } finally {

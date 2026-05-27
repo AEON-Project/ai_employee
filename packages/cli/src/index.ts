@@ -50,7 +50,7 @@ async function main(argv: string[]): Promise<number> {
     case 'metrics':
       return cmdMetrics()
     case 'seed':
-      return cmdSeed()
+      return cmdSeed({ reset: rest.includes('--reset') })
     case 'backup':
       return cmdBackup(rest[0])
     case 'models': {
@@ -95,7 +95,7 @@ function printHelp() {
   ai-emp keychain delete <name>     删除
   ai-emp recover                    列出 in-flight 需求
   ai-emp metrics                    PRD §12 量化指标采样
-  ai-emp seed                       导入 3 个样板项目 + 5 个员工 + 8 个技能
+  ai-emp seed [--reset]             导入样板（3 项目 + 5 员工 + 11 技能）；--reset 清空重导
   ai-emp backup [path]              DB 整盘备份
   ai-emp models pull                下载嵌入模型
   ai-emp version
