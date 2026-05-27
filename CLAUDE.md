@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`a7c7490` feat(cron): V2 O5 Cron 定时工单 — cronSpec 非空 = 模板，scheduler 每 60s 扫到期就创建 child 派给同员工；支持 every/daily/weekly 简化语法
+> 最近：`4e0aa4e` feat(mcp-client): V2 O6 MCP client — 接入 Model Context Protocol 工具生态；stdio MCP 协议极简实现 + McpManager 多 server + 自动注册到 ToolRegistry (mcp_<server>_<tool>)
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
