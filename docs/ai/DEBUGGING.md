@@ -30,21 +30,49 @@
 
 ---
 
-## 2. 标准 e2e 启动模板
+## 2. 标准 e2e 启动模板（重要：先杀旧 server 再启新进程）
+
+> **自动化 e2e 的第一步永远是「杀旧 server 启新进程」**。
+>
+> 原因：server 是 Bun 单进程，**改了任何 server / core / storage / domain / llm 包的代码都必须重启** — 旧进程跑的是几小时前的代码，跟你刚 commit 的 fix 无关。仅改 web 包时需要 `cd packages/web && bun run build`（server 自动从 dist/ 加载，不必重启），但 e2e 通常涉及 server 改动，**默认走完整重启流程**最稳。
+>
+> 重启时 `scanInflight` 会把 `status='进行中'` 的需求自动 enqueue 续跑（fix `0f93758`），所以**正在执行的需求不会丢**。
 
 ```bash
-# A. 启 server（前台或后台）
-./ai-emp serve                                        # 前台，Ctrl+C 退出
-./ai-emp serve > /tmp/aiemp.log 2>&1 &                # 后台，stdout 落文件
-echo $! > /tmp/aiemp.pid                              # 记 PID
+# A. 杀旧 server（按端口 - 比 pgrep 更可靠，无论命令行长什么样）
+PID=$(lsof -ti :7878 -sTCP:LISTEN)
+[ -n "$PID" ] && { kill $PID && sleep 2; }
+# 强保险：如果 2 秒内还活着，SIGKILL
+kill -9 $PID 2>/dev/null
 
-# B. 取 token（macOS / Linux 二选一）
+# B. （仅改 web 时）重 build
+cd packages/web && bun run build && cd ../..
+
+# C. 启新 server（后台，落日志到 /tmp 便于 e2e 串读）
+AIEMP_LOG_LEVEL=info nohup ./ai-emp serve > /tmp/aiemp-server.log 2>&1 &
+echo $! > /tmp/aiemp.pid
+sleep 5    # 等 server 起来（migration + sqlite-vec 加载 + scanInflight）
+
+# D. 取 token（macOS / Linux 二选一）
 TOKEN=$(security find-generic-password -s ai-emp -a localhost-token -w)   # macOS
 TOKEN=$(secret-tool lookup service ai-emp account localhost-token)        # Linux
 
-# C. curl 健康检查
+# E. 健康检查
 curl -s http://localhost:7878/health
 # {"ok":true,...}
+
+# F. 看新 server 的启动日志（最关键 — 验证 scheduler/migration/scanInflight 都对）
+head -20 /tmp/aiemp-server.log
+# 应该能看到：
+# - scanInflight 拉起 status='进行中' 的需求 → scheduler.enqueue → run.start
+# - "✓ ai-emp serve 启动：http://localhost:7878"
+# - Web UI dist 路径
+```
+
+调试型启动（看 LLM prompt / SQL 全文）：
+
+```bash
+AIEMP_LOG_LEVEL=debug nohup ./ai-emp serve > /tmp/aiemp-server.log 2>&1 &
 ```
 
 然后 AI 用 playwright 自动登录：
@@ -215,8 +243,10 @@ mcp__playwright__browser_wait_for(text="待验收")               # 等状态
 ## 5. 收尾
 
 ```bash
-# 停后台 server
-kill $(cat /tmp/aiemp.pid) 2>/dev/null
+# 停后台 server（用端口比 PID 更稳）
+PID=$(lsof -ti :7878 -sTCP:LISTEN)
+[ -n "$PID" ] && kill $PID
+rm -f /tmp/aiemp.pid
 
 # 清测试数据（可选）
 sqlite3 ~/.ai-emp/db.sqlite \
@@ -274,7 +304,8 @@ ts  scheduler     run.end       ms=3400
 | `/auth?token=...` 401 | token 错；从 keychain 重新取 |
 | WS 连不上 | 浏览器 Console 看错；多半是 cookie 没种（先走 `/auth?token=`） |
 | 改了 UI 浏览器看不到 | 没重 build；或缓存（Cmd+Shift+R 硬刷） |
-| **改了 server 代码不生效** | server 进程没重启；`ps aux \| grep ai-emp serve` 找 PID 后 kill 再起 |
+| **改了 server 代码不生效** | server 进程没重启；按 §2 走「杀旧 server 启新进程」流程；用 `lsof -ti :7878` 找 PID 比 `pgrep ai-emp` 可靠 |
+| `Failed to start server. Is port 7878 in use?` | 旧 server 没杀干净（`pgrep` 没匹配到 `bun /path/cli/...serve` 命令行）；按端口 `lsof -ti :7878 -sTCP:LISTEN` 找 PID kill |
 | **点继续按钮"无响应"** | 状态机其实正确转「进行中」，是 LLM stream 卡住或 401；先看 §6 LLM 链路一条龙 |
 | `messages` 表 0 条但状态在变 | 早期 `systemPause` 没 append error message（`0a00156` 已修）；同时看日志 `system_pause` |
 | OpenAI/Anthropic 401 | 员工 `modelKeyRef` 引用的 `env://AIEMP_*` 变量没在 `.env` 里设；或 modelProvider 协议错配（如 openai-compat 配 anthropic key） |
