@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`1eff507` feat(tools+prompt): Bash 加 env / background / yield_ms + Process tool + 防路径幻觉 prompt
+> 最近：`07dcbfe` docs(progress): ALPHA_TASKS §14 V2 优化清单（OpenClaw 对比 7 缺陷 + 6 优化项）
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
