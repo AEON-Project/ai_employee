@@ -44,3 +44,4 @@
 | `5b6b3f8` | fix(runtime): ask_user args 健壮化 + dispatch 抛错走 systemPause 不冒泡（日志一行定位 args.questions.map TypeError；状态从卡死「进行中」→ 优雅落「已暂停」可恢复） | — |
 | `c1e1db4` | docs(debugging): e2e 自动化测试加「杀旧 server 启新进程」流程（lsof -ti :7878 -sTCP:LISTEN 比 pgrep 可靠 + EADDRINUSE pitfall） | [DEBUGGING.md §2](../ai/DEBUGGING.md) |
 | `484b92b` | fix(prompt): 给 LLM 暴露 ask_user 等系统 tool 的真实 JSON Schema（ToolDef 加 inputJsonSchema；composer prompt 加结构化提示）— playwright 验证：gpt-4o 正确产出 trigger_reason=missing_info + 2 个 question 数组 → 状态进「等待回答」+ 澄清卡片渲染 | — |
+| `412e1ab` | fix(runtime): streaming delta 合并为单条 message（修复思维链「逐字竖排」bug）— handleChunk 改用 StreamingBuffer，按 thinking/text 类型累积，类型切换 / tool_use_stop / message_stop / error / 循环末尾兜底时一次性 flush；中文 provider 把流切到 1–3 字粒度时不再每字一条 | — |

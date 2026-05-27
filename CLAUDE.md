@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`484b92b` fix(prompt): 给 LLM 暴露 ask_user 等系统 tool 的真实 JSON Schema
+> 最近：`412e1ab` fix(runtime): streaming delta 合并为单条 message（修复思维链「逐字竖排」bug）
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
