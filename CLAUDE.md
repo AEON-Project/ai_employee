@@ -19,6 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **目标**：验证"配置过技能和人设的 AI 员工，能否在『澄清前置 + 过程透明 + 记忆沉淀 + 纠错学习』机制下完成任务，且下次同类任务做得更好"。
 
 **核心机制**：
+
 1. 澄清前置：员工接单先复述理解 + 列拆解 + 提问
 2. 过程透明：思维链 + 当前步骤 + 下一步计划三栏
 3. 纠错沉淀：失败/返工/差评自动写入个人教训 + 项目踩坑库
@@ -67,6 +68,7 @@ UI / WS / API 改动必走视觉验证 → [docs/ai/DEBUGGING.md](./docs/ai/DEBU
 ## ⚡ 运行时硬规则
 
 **必须用 Bun，不用 Node**：
+
 - `bun <file>` 不是 `node <file>` 或 `ts-node`
 - `bun:sqlite` 不是 `better-sqlite3`
 - `bun test` 不是 jest/vitest
@@ -137,19 +139,21 @@ cli  →  server / bridge-tg          ← 入口层
 /                            ← 根目录（用户/AI 入口）
 ├── README.md                ← 项目介绍（GitHub 首页）
 ├── CLAUDE.md                ← 本文件（AI 入口摘要）
-├── GETTING_STARTED.md       ← 新用户向导
+├── GETTING_STARTED.md       ← 新用户向导（含 V2 新能力速览）
 └── docs/
     ├── product/
-    │   ├── PRD_V1.md        ← 当前 V1.0 产品需求
+    │   ├── PRD_V1.md        ← V1.0 产品需求（四大实体 / 记忆 / 流程 / 验收）
+    │   ├── PRD_V2.md        ← V2 优化扩展（三方对比补齐 11 项 + 边界）
     │   └── PRD.md           ← 历史 PRD 归档
     ├── architecture/
     │   ├── ARCHITECTURE.md  ← 技术架构（模块边界 / 状态机 / 事件 / DB schema）
     │   ├── CONVENTIONS.md   ← 工程约定 + 决策 + 已踩坑
     │   └── SPIKE_RESULTS.md ← W0 技术验证
     ├── progress/
-    │   ├── ALPHA_TASKS.md   ← α/β 工单清单 + 状态
+    │   ├── ALPHA_TASKS.md   ← α / β / V2 工单清单（§14 三方对比终版）
     │   └── CHANGELOG.md     ← 每次开发的 commit hash 流水
     └── ai/
         ├── WORKFLOW.md      ← AI 协作工作流（A–G）
-        └── DEBUGGING.md     ← 浏览器自动化端到端调试
+        ├── DEBUGGING.md     ← 浏览器自动化端到端调试
+        └── V2_E2E_VERIFICATION.md ← V2 11 项能力的端到端验证 playbook
 ```
