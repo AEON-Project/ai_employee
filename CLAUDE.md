@@ -67,6 +67,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `663d4cc` | feat(seed): 5 员工角色（后端/前端/测试/产品/UI 设计）+ 输出清晰化 | — |
 | `dcf573b` | fix(seed): `--reset` 真删（不是 archive） | — |
 | `f0d8f43` | docs(claude): 加 CLAUDE.md | 本文件 |
+| `6ade242` | docs(claude): CLAUDE.md 加产品需求 + 进度状态 + AI 协作工作流 | 本文件 |
 
 ### 进行中
 
