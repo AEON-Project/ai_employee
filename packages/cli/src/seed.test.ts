@@ -78,17 +78,71 @@ describe('seedAll', () => {
   })
 })
 
-describe('seedReset', () => {
-  test('清空当前样板员工 + 重新导入', () => {
+describe('seedReset（真删，不是 archive）', () => {
+  test('清空当前样板（含 archived 不残留）+ 重导入', () => {
     const { db, sqlite } = openDatabase({ path: ':memory:' })
     migrate(sqlite)
     const repos = createRepos(db)
     seedAll(repos)
-    expect(repos.employees.list().filter((e) => e.status === 'active')).toHaveLength(5)
+    expect(repos.employees.list()).toHaveLength(5)
 
-    const r = seedReset(repos)
-    expect(r.employees).toBe(5) // 5 个新建（旧的已 archive）
-    expect(repos.employees.list().filter((e) => e.status === 'active')).toHaveLength(5)
-    expect(repos.employees.list().filter((e) => e.status === 'archived')).toHaveLength(5)
+    const r = seedReset(repos, sqlite)
+    expect(r.employees).toBe(5)
+    // 真删后总数仍是 5（不是 10），无 archived 残留
+    const allEmps = repos.employees.list()
+    expect(allEmps).toHaveLength(5)
+    expect(allEmps.every((e) => e.status === 'active')).toBe(true)
+
+    // 技能也是 11（不是 22）
+    expect(repos.skills.list()).toHaveLength(11)
+    // 项目 3（不是 6）
+    expect(repos.projects.list()).toHaveLength(3)
+  })
+
+  test('保留用户自建的员工 / 项目 / 技能', () => {
+    const { db, sqlite } = openDatabase({ path: ':memory:' })
+    migrate(sqlite)
+    const repos = createRepos(db)
+    seedAll(repos)
+    const userEmp = repos.employees.create({
+      name: '我自己',
+      role: '杂工',
+      modelProvider: 'anthropic',
+      modelName: 'env://X',
+      modelKeyRef: 'env://Y',
+    })
+    const userProj = repos.projects.create({ name: '我的项目', description: '' })
+    const userSkill = repos.skills.create({
+      name: '自创技能',
+      category: '通用',
+      description: '',
+      promptTemplate: '',
+    })
+
+    seedReset(repos, sqlite)
+    expect(repos.employees.findById(userEmp)).not.toBeNull()
+    expect(repos.projects.findById(userProj)).not.toBeNull()
+    expect(repos.skills.findById(userSkill)).not.toBeNull()
+  })
+
+  test('引用过样板员工的用户 requirement 的 assignee_id 被 NULL 化', () => {
+    const { db, sqlite } = openDatabase({ path: ':memory:' })
+    migrate(sqlite)
+    const repos = createRepos(db)
+    seedAll(repos)
+    const xiaohou = repos.employees.list().find((e) => e.name === '小后')!
+
+    const userProj = repos.projects.create({ name: '我的项目', description: '' })
+    const reqId = repos.requirements.create({
+      title: '需求 X',
+      description: 'D',
+      projectId: userProj,
+      assigneeId: xiaohou.id,
+      budgetCap: { maxIterations: 30, maxTokens: 100, maxWallTimeMs: 1000 },
+    })
+
+    seedReset(repos, sqlite)
+    const after = repos.requirements.findById(reqId)!
+    expect(after.assigneeId).toBeNull()
   })
 })

@@ -5,6 +5,7 @@
  * 员工的 modelKeyRef 留为 "REPLACE_ME"，用户用前需先 `keychain set`。
  */
 
+import type { Database } from 'bun:sqlite'
 import type { LLMProvider, SkillCategory } from '@ai-emp/domain'
 import type { Repos } from '@ai-emp/storage'
 
@@ -339,22 +340,60 @@ export function seedAll(repos: Repos): SeedResult {
 
 /**
  * 清空所有样板内容（按名字匹配；用户自建的不动）后重新导入。
- * 用法：`./ai-emp seed --reset`
+ *
+ * 真删（不是 archive）：
+ *   - 样板项目 → DELETE，cascade 清 requirements / threads / messages / clarifications / reports / runtime_state / conventions
+ *   - 样板员工 → 先 NULL 掉其他 requirements.assignee_id，再 DELETE employees
+ *     （cascade 清 employee_skills / tool_grants）
+ *   - 样板技能 → DELETE（先解除挂载）
+ *
+ * 用户自建的项目 / 员工 / 技能不动；他们引用了样板员工的 requirement 会被设为
+ * 无 assignee（status 不变，用户可重新指派）。
  */
-export function seedReset(repos: Repos): SeedResult {
-  const seedSkillNames = new Set(SKILLS.map((s) => s.name))
-  const seedProjectNames = new Set(PROJECTS.map((p) => p.name))
-  const seedEmployeeNames = new Set(EMPLOYEES.map((e) => e.name))
+export function seedReset(repos: Repos, sqlite: Database): SeedResult {
+  const seedSkillNames = SKILLS.map((s) => s.name)
+  const seedProjectNames = PROJECTS.map((p) => p.name)
+  const seedEmployeeNames = EMPLOYEES.map((e) => e.name)
 
-  for (const e of repos.employees.list()) {
-    if (seedEmployeeNames.has(e.name)) repos.employees.archive(e.id)
-  }
-  for (const p of repos.projects.list()) {
-    if (seedProjectNames.has(p.name)) repos.projects.delete(p.id)
-  }
-  // skills 没有 delete 方法；这里直接重新建会冲突 — 跳过 skills 重置
-  // （技能本身设计为可复用，少量重复无害）
-  void seedSkillNames
+  sqlite.transaction(() => {
+    // ① 删除样板项目（cascade）
+    const projPlaceholders = seedProjectNames.map(() => '?').join(',')
+    if (seedProjectNames.length > 0) {
+      sqlite
+        .prepare(`DELETE FROM projects WHERE name IN (${projPlaceholders})`)
+        .run(...seedProjectNames)
+    }
+
+    // ② 把仍引用样板员工的 requirement.assignee_id 设为 null
+    const empPlaceholders = seedEmployeeNames.map(() => '?').join(',')
+    if (seedEmployeeNames.length > 0) {
+      sqlite
+        .prepare(
+          `UPDATE requirements SET assignee_id = NULL
+             WHERE assignee_id IN (SELECT id FROM employees WHERE name IN (${empPlaceholders}))`,
+        )
+        .run(...seedEmployeeNames)
+
+      // ③ 删除样板员工（cascade 清 employee_skills / tool_grants）
+      sqlite
+        .prepare(`DELETE FROM employees WHERE name IN (${empPlaceholders})`)
+        .run(...seedEmployeeNames)
+    }
+
+    // ④ 删除样板技能（先清挂载，再删）
+    const skillPlaceholders = seedSkillNames.map(() => '?').join(',')
+    if (seedSkillNames.length > 0) {
+      sqlite
+        .prepare(
+          `DELETE FROM employee_skills
+             WHERE skill_id IN (SELECT id FROM skills WHERE name IN (${skillPlaceholders}))`,
+        )
+        .run(...seedSkillNames)
+      sqlite
+        .prepare(`DELETE FROM skills WHERE name IN (${skillPlaceholders})`)
+        .run(...seedSkillNames)
+    }
+  })()
 
   return seedAll(repos)
 }

@@ -348,7 +348,9 @@ export async function cmdSeed(opts: { reset?: boolean } = {}): Promise<number> {
   const { seedAll, seedReset } = await import('./seed.js')
   const boot = await bootServices()
   try {
-    const r = opts.reset ? seedReset(boot.services.repos) : seedAll(boot.services.repos)
+    const r = opts.reset
+      ? seedReset(boot.services.repos, boot.sqlite)
+      : seedAll(boot.services.repos)
 
     const skipMsg =
       r.skipped.projects + r.skipped.employees + r.skipped.skills > 0

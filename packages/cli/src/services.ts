@@ -2,6 +2,7 @@
  * CLI 启动期构造 RuntimeServices（连 DB / keychain / 工具注册）。
  */
 
+import type { Database } from 'bun:sqlite'
 import { TypedEventBus, type EventMap } from '@ai-emp/events'
 import {
   CredentialsRepo,
@@ -24,6 +25,8 @@ import { dbPath } from './config.js'
 export interface BootResult {
   services: RuntimeServices
   bus: TypedEventBus<EventMap>
+  /** 底层 sqlite handle，供 seed/maintenance 等命令做 raw SQL 操作 */
+  sqlite: Database
   close: () => void
 }
 
@@ -86,6 +89,7 @@ export async function bootServices(): Promise<BootResult> {
   return {
     services,
     bus,
+    sqlite,
     close: () => closeDatabase(sqlite),
   }
 }
