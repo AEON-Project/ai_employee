@@ -34,3 +34,4 @@
 | `d644706` | docs(claude): 回填 6ade242（吃自己狗粮验证闭环） | — |
 | `11a36ec` | docs(claude): 加"本地端到端调试（浏览器自动化）"段 — browser_navigate MCP | [docs/ai/DEBUGGING.md](../ai/DEBUGGING.md) |
 | `48631d4` | docs(claude): 回填 d644706 + 11a36ec 到"已交付"表 | — |
+| `964f6ac` | docs: 按文件夹分类整理文档 + 拆分 CLAUDE.md（新增 docs/{product,architecture,progress,ai}/） | 本文件 + [WORKFLOW](../ai/WORKFLOW.md) + [DEBUGGING](../ai/DEBUGGING.md) + [CONVENTIONS](../architecture/CONVENTIONS.md) |

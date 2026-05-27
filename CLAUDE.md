@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`48631d4` docs(claude): 回填 d644706 + 11a36ec
+> 最近：`964f6ac` docs: 按文件夹分类整理文档 + 拆分 CLAUDE.md
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
