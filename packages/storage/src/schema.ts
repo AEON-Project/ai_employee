@@ -141,11 +141,17 @@ export const requirements = sqliteTable(
     budgetCapJson: text('budget_cap_json', { mode: 'json' }).$type<BudgetCap>().notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+    // V2 O3: 父需求引用 — 通过 spawn_employee 派生的子工单记录父；
+    // null = 顶层工单。引擎用它防递归（spawn 链深度 ≤ 1）。
+    parentRequirementId: text('parent_requirement_id').references((): any => requirements.id, {
+      onDelete: 'set null',
+    }),
   },
   (t) => ({
     byProj: index('req_proj').on(t.projectId),
     byAssignee: index('req_assignee').on(t.assigneeId),
     byStatus: index('req_status').on(t.status),
+    byParent: index('req_parent').on(t.parentRequirementId),
   }),
 )
 

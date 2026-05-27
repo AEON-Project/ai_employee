@@ -31,6 +31,8 @@ import { transition } from './state-machine.js'
 import { composeMinimalPrompt } from './prompt-minimal.js'
 import { compose as composeFullPrompt } from '../prompt/composer.js'
 import { reindexSource } from '../memory/memory.js'
+import { assignRequirement } from './commands.js'
+import { DEFAULT_BUDGET_CAP } from '@ai-emp/domain'
 import type { RuntimeServices, RuntimeLLMChunk, RuntimeToolDef } from './services.js'
 
 /** 终止信号：执行循环退出的几种方式 */
@@ -769,6 +771,209 @@ async function dispatch(
           },
         ],
       })
+      return {
+        kind: 'continue',
+        newState: {
+          currentStep: ctx.currentStep,
+          historySummary: ctx.historySummary,
+          budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+        },
+      }
+    }
+    case 'spawn_employee': {
+      // V2 O3 sub-agent 协作：父员工同步派发子任务给另一员工，引擎嵌套
+      // 执行子工单后把子员工 deliverable 作为 tool_result 回传给父员工。
+      // 防递归：parentRequirementId 已存在的子工单不可再 spawn（深度 ≤ 1）。
+      const argsS = call.args as {
+        targetEmployeeId?: string
+        taskTitle?: string
+        taskDescription?: string
+      }
+      const targetEmpId =
+        typeof argsS.targetEmployeeId === 'string' ? argsS.targetEmployeeId.trim() : ''
+      const taskTitle = typeof argsS.taskTitle === 'string' ? argsS.taskTitle.trim() : ''
+      const taskDesc = typeof argsS.taskDescription === 'string' ? argsS.taskDescription.trim() : ''
+
+      const writeSpawnError = (errMsg: string) => {
+        repos.messages.append({
+          threadId: thread.id,
+          role: 'system',
+          type: 'error',
+          content: { type: 'error', message: errMsg, fatal: false },
+        })
+      }
+
+      if (!targetEmpId || !taskTitle || !taskDesc) {
+        writeSpawnError(
+          'spawn_employee 已忽略：缺少必要字段（targetEmployeeId / taskTitle / taskDescription 均非空）',
+        )
+        return {
+          kind: 'continue',
+          newState: {
+            currentStep: ctx.currentStep,
+            historySummary: ctx.historySummary,
+            budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+          },
+        }
+      }
+
+      // 防递归：当前工单已经是子工单（有 parent），不允许再 spawn
+      const reqRowS = repos.requirements.findById(reqId)
+      if (reqRowS?.parentRequirementId) {
+        writeSpawnError(
+          'spawn_employee 已拒绝：当前工单本身是子工单（parentRequirementId 非空），不允许进一步派发。请把任务做完或 ask_user 让用户协调。',
+        )
+        return {
+          kind: 'continue',
+          newState: {
+            currentStep: ctx.currentStep,
+            historySummary: ctx.historySummary,
+            budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+          },
+        }
+      }
+
+      // 防自环：targetEmployeeId 不能就是当前员工
+      if (targetEmpId === employee.id) {
+        writeSpawnError(
+          `spawn_employee 已拒绝：targetEmployeeId=${targetEmpId} 就是当前员工自己，不要 spawn 给自己。`,
+        )
+        return {
+          kind: 'continue',
+          newState: {
+            currentStep: ctx.currentStep,
+            historySummary: ctx.historySummary,
+            budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+          },
+        }
+      }
+
+      const targetEmp = repos.employees.findById(targetEmpId)
+      if (!targetEmp) {
+        writeSpawnError(
+          `spawn_employee 已忽略：找不到 employee id=${targetEmpId}。请先通过 list_employees 等方式确认 id。`,
+        )
+        return {
+          kind: 'continue',
+          newState: {
+            currentStep: ctx.currentStep,
+            historySummary: ctx.historySummary,
+            budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+          },
+        }
+      }
+
+      // 创建子工单
+      const subReqId = repos.requirements.create({
+        title: taskTitle,
+        description: taskDesc,
+        projectId: reqRowS?.projectId ?? null,
+        parentRequirementId: reqId,
+        budgetCap: reqRowS?.budgetCapJson ?? DEFAULT_BUDGET_CAP,
+      })
+      // 派活（skipClarification = true，子员工直接进入 '进行中'）
+      assignRequirement(services, subReqId, targetEmpId, { skipClarification: true })
+
+      log.info('spawn_employee.start', {
+        parentReqId: reqId,
+        subReqId,
+        targetEmpId,
+        taskTitle,
+      })
+
+      // 父 thread 留痕：tool_call message
+      repos.messages.append({
+        threadId: thread.id,
+        role: 'assistant',
+        type: 'tool_call',
+        content: {
+          type: 'tool_call',
+          name: 'spawn_employee',
+          callId: call.callId,
+          args: { targetEmployeeId: targetEmpId, taskTitle, subRequirementId: subReqId },
+        },
+      })
+      bus.emit('tool.invoked', {
+        reqId,
+        tool: 'spawn_employee',
+        input: { targetEmployeeId: targetEmpId, taskTitle, subRequirementId: subReqId },
+      })
+
+      // 嵌套同步执行子工单（子有自己的 BudgetTracker；父的 budget 不算子的）
+      let subExit: ExitKind = 'paused'
+      try {
+        const r = await executeRequirement(subReqId, services)
+        subExit = r.exit
+      } catch (err) {
+        log.warn('spawn_employee.subexec_error', {
+          parentReqId: reqId,
+          subReqId,
+          err: String(err),
+        })
+      }
+
+      const subReqAfter = repos.requirements.findById(subReqId)
+      const subStatus = subReqAfter?.status ?? '已暂停'
+      const subDeliverable = subReqAfter?.deliverableRef ?? null
+
+      // 把子 thread 最后一条 assistant text 抓出来作为人类可读摘要
+      let subSummary = ''
+      const subThread = repos.threads.findByRequirement(subReqId)
+      if (subThread) {
+        const subMsgs = repos.messages.listByThread(subThread.id)
+        for (let i = subMsgs.length - 1; i >= 0; i--) {
+          const m = subMsgs[i]!
+          if (m.role === 'assistant' && m.type === 'text') {
+            const t = (m.contentJson as { text?: string }).text ?? ''
+            if (t.trim().length > 0) {
+              subSummary = t.slice(0, 800)
+              break
+            }
+          }
+        }
+      }
+
+      // 写 tool_result 到父 thread（父员工下一轮 LLM 调用就能看到）
+      const ok = subExit === 'delivered'
+      repos.messages.append({
+        threadId: thread.id,
+        role: 'tool',
+        type: 'tool_result',
+        content: {
+          type: 'tool_result',
+          callId: call.callId,
+          ok,
+          value: {
+            subRequirementId: subReqId,
+            subEmployeeId: targetEmpId,
+            subEmployeeName: targetEmp.name,
+            subStatus,
+            subExit,
+            deliverableRef: subDeliverable,
+            summary: subSummary,
+          },
+        },
+      })
+      bus.emit('tool.result', {
+        reqId,
+        tool: 'spawn_employee',
+        result: {
+          subRequirementId: subReqId,
+          subStatus,
+          subExit,
+          deliverableRef: subDeliverable,
+        },
+        ok,
+      })
+
+      log.info('spawn_employee.end', {
+        parentReqId: reqId,
+        subReqId,
+        subStatus,
+        subExit,
+        ok,
+      })
+
       return {
         kind: 'continue',
         newState: {

@@ -324,6 +324,68 @@ export const emitLessonTool: ToolDef<EmitLessonArgs, never> = {
   },
 }
 
+// ── spawn_employee ──────────────────────────────────────────
+//
+// V2 O3 sub-agent 协作（PRD「组织+岗位」心智完整性）。
+// 父员工把子任务派给另一员工，引擎同步执行子工单后把子员工的 deliverable
+// 回传作为父员工的 tool_result，父员工拿到结果继续干。
+//
+// 防递归：父工单深度 ≤ 1，即子员工不可再 spawn（runtime 检查 parentRequirementId）。
+export const SpawnEmployeeArgsZ = z.object({
+  /** 目标员工 id */
+  targetEmployeeId: z.string().min(1),
+  /** 子任务标题 */
+  taskTitle: z.string().min(1).max(120),
+  /** 子任务详情；将作为子工单 description 直接给子员工看 */
+  taskDescription: z.string().min(1),
+})
+export type SpawnEmployeeArgs = z.infer<typeof SpawnEmployeeArgsZ>
+
+export const spawnEmployeeTool: ToolDef<SpawnEmployeeArgs, never> = {
+  name: 'spawn_employee',
+  kind: 'system',
+  description: [
+    '把一个子任务派给另一员工（同项目），引擎同步执行直至子员工交付或暂停，',
+    '然后把子员工的 deliverable 作为本 tool 的 result 返回给你。',
+    '何时调用：',
+    '  - 子任务超出你当前岗位的擅长范围（例如：前端员工遇到后端 SQL 优化子任务）',
+    '  - 需要并行视角（例如让测试员工跑一遍 e2e 报告问题）',
+    '  - 大任务需要分工（你只做规划，把实施分给执行员工）',
+    '注意：',
+    '  - 仅能在顶层工单调用；从子工单内再 spawn 会被引擎拒绝（防递归）',
+    '  - targetEmployeeId 必须是已存在的员工 id；引擎找不到会写 system/error 不暂停',
+    '  - 子员工跑完后 tool_result 含其 deliverable（contentText / summary 摘要）',
+    '不要把整个工单都 spawn 出去 — 那只是把责任甩给别人，你自己什么也没干。',
+  ].join('\n'),
+  inputSchema: SpawnEmployeeArgsZ,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      targetEmployeeId: {
+        type: 'string',
+        minLength: 1,
+        description: '接活的员工 id（可通过 list_employees 或团队上下文中获取）',
+      },
+      taskTitle: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 120,
+        description: '子任务的简短标题',
+      },
+      taskDescription: {
+        type: 'string',
+        minLength: 1,
+        description: '子任务详情；写清楚目标 / 约束 / 输入 / 期望产出',
+      },
+    },
+    required: ['targetEmployeeId', 'taskTitle', 'taskDescription'],
+    additionalProperties: false,
+  },
+  invoke: async () => {
+    throw new Error('spawn_employee must be dispatched by runtime')
+  },
+}
+
 /**
  * 全部系统级 tool 列表，registry 启动时一次注册。
  * 用 `ToolDef[]` 类型存储时各项 I/O 泛型实例化为 unknown — 数组元素只读，安全。
@@ -335,6 +397,7 @@ export const SYSTEM_TOOLS: ToolDef[] = [
   emitDeliverableTool as ToolDef,
   emitSkillTool as ToolDef,
   emitLessonTool as ToolDef,
+  spawnEmployeeTool as ToolDef,
 ]
 
 export const SYSTEM_TOOL_NAMES = new Set(SYSTEM_TOOLS.map((t) => t.name))

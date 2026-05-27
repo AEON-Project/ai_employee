@@ -292,6 +292,8 @@ export class RequirementsRepo {
     assigneeId?: string | null
     priority?: Priority
     budgetCap: BudgetCap
+    /** V2 O3 sub-agent: 父需求 id；通过 spawn_employee 派生的子工单填这里 */
+    parentRequirementId?: string | null
   }): string {
     const id = newId()
     this.db
@@ -305,6 +307,7 @@ export class RequirementsRepo {
         priority: input.priority ?? 'P1',
         status: '待分派',
         budgetCapJson: input.budgetCap,
+        parentRequirementId: input.parentRequirementId ?? null,
         createdAt: now(),
       })
       .run()

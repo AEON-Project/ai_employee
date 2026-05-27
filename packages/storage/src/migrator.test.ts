@@ -29,7 +29,12 @@ describe('migrate()', () => {
     const { db, sqlite } = openDatabase({ path: ':memory:' })
     try {
       const r1 = migrate(sqlite)
-      expect(r1.applied).toEqual(['0000_init.sql', '0001_vec.sql', '0002_project_workdir.sql'])
+      expect(r1.applied).toEqual([
+        '0000_init.sql',
+        '0001_vec.sql',
+        '0002_project_workdir.sql',
+        '0003_requirement_parent.sql',
+      ])
       expect(r1.skipped).toEqual([])
 
       const tables = sqlite
@@ -44,7 +49,12 @@ describe('migrate()', () => {
 
       const r2 = migrate(sqlite)
       expect(r2.applied).toEqual([])
-      expect(r2.skipped).toEqual(['0000_init.sql', '0001_vec.sql', '0002_project_workdir.sql'])
+      expect(r2.skipped).toEqual([
+        '0000_init.sql',
+        '0001_vec.sql',
+        '0002_project_workdir.sql',
+        '0003_requirement_parent.sql',
+      ])
 
       // 验证 drizzle 实例已绑定 schema：能 insert/select projects
       const now = Date.now()

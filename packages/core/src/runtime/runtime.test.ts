@@ -48,6 +48,7 @@ const mockTools: RuntimeToolDef[] = [
   { name: 'emit_deliverable', kind: 'system', description: '', inputSchema: passThroughSchema },
   { name: 'emit_skill', kind: 'system', description: '', inputSchema: passThroughSchema },
   { name: 'emit_lesson', kind: 'system', description: '', inputSchema: passThroughSchema },
+  { name: 'spawn_employee', kind: 'system', description: '', inputSchema: passThroughSchema },
 ]
 const toolJsonSchema = (_name: string) => ({}) // 形状对 mock 测试不重要
 const mockRegistry = {
@@ -847,6 +848,293 @@ describe('executeRequirement', () => {
     expect(repos.requirements.findById(reqId)!.status).toBe('已驳回')
     const lessons = repos.memoryItems.list({ scope: 'employee', scopeId: empId, kind: 'lesson' })
     expect(lessons.length).toBe(0)
+  })
+
+  test('V2 O3: spawn_employee 嵌套执行 → 子员工交付 → 父员工收到 tool_result', async () => {
+    // 用闭包对象延迟填充 spawn args.targetEmployeeId（子员工 id 在 setup 后才知道）
+    const spawnArgs: {
+      targetEmployeeId: string
+      taskTitle: string
+      taskDescription: string
+    } = {
+      targetEmployeeId: '__will_fill__',
+      taskTitle: '查项目里所有 enum',
+      taskDescription: '请用 find 找出 src/main/java 下所有 *Enum.java 文件并列出',
+    }
+    const { services, repos, reqId, empId } = setup([
+      // turn 0 (父): spawn_employee
+      [
+        { type: 'text_delta', text: '把子任务交给后端员工' },
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'spawn_employee',
+          args: spawnArgs,
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 1 (子): emit_deliverable
+      [
+        { type: 'text_delta', text: '子员工已找到 3 个 enum 文件' },
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'emit_deliverable',
+          args: { summary: '子交付', contentText: '找到 A.java, B.java, C.java' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 2 (父): emit_deliverable
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't3',
+          name: 'emit_deliverable',
+          args: { summary: '父交付', contentText: '已让后端员工查完所有 enum' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+
+    // 创建子员工（复用 setup 里的 fixed-llm-key）
+    const subEmpId = repos.employees.create({
+      name: '小张',
+      role: '后端',
+      modelProvider: 'anthropic',
+      modelName: 'claude-opus-4-7',
+      modelKeyRef: 'fixed-llm-key',
+      persona: '严谨',
+    })
+    spawnArgs.targetEmployeeId = subEmpId
+
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    const r = await executeRequirement(reqId, services)
+    expect(r.exit).toBe('delivered')
+
+    // 父工单 → 待验收
+    const parentReq = repos.requirements.findById(reqId)!
+    expect(parentReq.status).toBe('待验收')
+
+    // 子工单应被创建并完成
+    const allReqs = repos.requirements.listAll()
+    const subReq = allReqs.find((r) => r.parentRequirementId === reqId)
+    expect(subReq).toBeDefined()
+    expect(subReq!.status).toBe('待验收')
+    expect(subReq!.title).toBe('查项目里所有 enum')
+    expect(subReq!.assigneeId).toBe(subEmpId)
+
+    // 父 thread 应有 spawn 的 tool_call + tool_result
+    const parentThread = repos.threads.findByRequirement(reqId)!
+    const parentMsgs = repos.messages.listByThread(parentThread.id)
+    const spawnCall = parentMsgs.find(
+      (m) =>
+        m.type === 'tool_call' && (m.contentJson as { name?: string }).name === 'spawn_employee',
+    )
+    expect(spawnCall).toBeDefined()
+    const spawnResult = parentMsgs.find((m) => {
+      if (m.type !== 'tool_result') return false
+      const v = (m.contentJson as { value?: { subRequirementId?: string } }).value
+      return v?.subRequirementId === subReq!.id
+    })
+    expect(spawnResult).toBeDefined()
+    const resultValue = (spawnResult!.contentJson as { value: Record<string, unknown> }).value
+    expect(resultValue.subStatus).toBe('待验收')
+    expect(resultValue.subExit).toBe('delivered')
+    expect(resultValue.subEmployeeId).toBe(subEmpId)
+    // summary 抓的是 sub thread 最后一条 assistant text（emit_deliverable.contentText）
+    expect(String(resultValue.summary)).toContain('找到 A.java, B.java, C.java')
+  })
+
+  test('V2 O3: spawn_employee 防递归 — 子工单内再 spawn 被拒绝', async () => {
+    // 父 spawn 一个子工单，子工单又试图 spawn → 引擎拒绝写 system/error
+    const spawnArgs: { targetEmployeeId: string; taskTitle: string; taskDescription: string } = {
+      targetEmployeeId: '__will_fill_sub__',
+      taskTitle: '一层',
+      taskDescription: 'desc',
+    }
+    const nestedSpawnArgs: {
+      targetEmployeeId: string
+      taskTitle: string
+      taskDescription: string
+    } = {
+      targetEmployeeId: '__will_fill_grand__',
+      taskTitle: '二层（应被拒）',
+      taskDescription: 'desc',
+    }
+    const { services, repos, reqId, empId } = setup([
+      // turn 0 (父): spawn
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'spawn_employee',
+          args: spawnArgs,
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 1 (子): 试图再 spawn
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'spawn_employee',
+          args: nestedSpawnArgs,
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 2 (子): 被拒后 emit_deliverable 收尾
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't3',
+          name: 'emit_deliverable',
+          args: { summary: '子收尾', contentText: '我无法 spawn 孙子，直接交付' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 3 (父): emit_deliverable
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't4',
+          name: 'emit_deliverable',
+          args: { summary: '父收尾', contentText: '完成' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    const subEmpId = repos.employees.create({
+      name: '小子',
+      role: '后端',
+      modelProvider: 'anthropic',
+      modelName: 'claude-opus-4-7',
+      modelKeyRef: 'fixed-llm-key',
+    })
+    const grandEmpId = repos.employees.create({
+      name: '小孙',
+      role: '后端',
+      modelProvider: 'anthropic',
+      modelName: 'claude-opus-4-7',
+      modelKeyRef: 'fixed-llm-key',
+    })
+    spawnArgs.targetEmployeeId = subEmpId
+    nestedSpawnArgs.targetEmployeeId = grandEmpId
+
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    const r = await executeRequirement(reqId, services)
+    expect(r.exit).toBe('delivered')
+
+    // 只应有一个子工单（grand 不应被创建）
+    const subs = repos.requirements.listAll().filter((r) => r.parentRequirementId !== null)
+    expect(subs.length).toBe(1)
+    expect(subs[0]!.title).toBe('一层')
+
+    // 子 thread 应有 system/error 关于"不允许进一步派发"
+    const subThread = repos.threads.findByRequirement(subs[0]!.id)!
+    const subMsgs = repos.messages.listByThread(subThread.id)
+    const recursionErr = subMsgs.find(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes('不允许进一步派发'),
+    )
+    expect(recursionErr).toBeDefined()
+  })
+
+  test('V2 O3: spawn_employee targetEmployeeId 不存在 → system/error 不暂停', async () => {
+    const { services, repos, reqId, empId } = setup([
+      // turn 0: spawn 给不存在的员工
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'spawn_employee',
+          args: {
+            targetEmployeeId: 'no-such-emp',
+            taskTitle: '幽灵任务',
+            taskDescription: '...',
+          },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 1: 父 emit_deliverable 兜底
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'emit_deliverable',
+          args: { summary: '兜底', contentText: '...' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    const r = await executeRequirement(reqId, services)
+    expect(r.exit).toBe('delivered')
+    // 不应创建子工单
+    const subs = repos.requirements.listAll().filter((r) => r.parentRequirementId !== null)
+    expect(subs.length).toBe(0)
+    // 应有 system/error
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    const errMsg = msgs.find(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes(
+          '找不到 employee id=no-such-emp',
+        ),
+    )
+    expect(errMsg).toBeDefined()
+  })
+
+  test('V2 O3: spawn_employee 拒绝自环 (targetEmployeeId == 自己)', async () => {
+    const selfSpawnArgs: {
+      targetEmployeeId: string
+      taskTitle: string
+      taskDescription: string
+    } = {
+      targetEmployeeId: '__will_fill_self__',
+      taskTitle: '自己派给自己',
+      taskDescription: '...',
+    }
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'spawn_employee',
+          args: selfSpawnArgs,
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'emit_deliverable',
+          args: { summary: 'done', contentText: '...' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    selfSpawnArgs.targetEmployeeId = empId
+
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+    // 应没有子工单
+    const subs = repos.requirements.listAll().filter((r) => r.parentRequirementId !== null)
+    expect(subs.length).toBe(0)
+    // 应有 system/error
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    const errMsg = msgs.find(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes('就是当前员工自己'),
+    )
+    expect(errMsg).toBeDefined()
   })
 
   test('V1.4: LLM 429 错误自动退避重试，不立即 system_pause', async () => {
