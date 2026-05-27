@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`58395e2` fix(prompt+runtime): V1.2 防 LLM 路径幻觉 + 工具失败假装完成（composer 加规则 + advance_step 硬阻止）
+> 最近：`d1cd040` fix(runtime+prompt): V1.3 emit_deliverable 防"谎报完成"（对账 claimed paths vs Edit/Write tool_result）
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
