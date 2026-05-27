@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`1a1ee56` docs(progress): §14 重构为三方对比终版（OpenClaw + hermes-agent + ai_employee，D1-D13 缺陷 / O1-O13 优化项 / P0 = Skills 自演化 + memory 闭环 + sub-agent）
+> 最近：`0e1431e` feat(memory+tools): V2 O1 Skills 自演化系统 — emit_skill 系统 tool + memory_items kind='skill' + composer RAG 注入（参考 hermes agentskills.io，三方对比第一波 P0）
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
