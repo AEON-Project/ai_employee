@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`d9099e9` feat(tools): V1.1 file/shell tool 集（Read/Write/Edit/Glob/Grep/Bash 完整本地权限）+ E2E 真改外部项目代码
+> 最近：`58395e2` fix(prompt+runtime): V1.2 防 LLM 路径幻觉 + 工具失败假装完成（composer 加规则 + advance_step 硬阻止）
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
