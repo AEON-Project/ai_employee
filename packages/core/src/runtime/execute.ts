@@ -113,8 +113,8 @@ export async function executeRequirement(
   const budget = new BudgetTracker(req.budgetCapJson, execState.budgetUsedJson)
   budget.startWallClock()
 
-  // 员工已授权的标准 tool（α 暂未实现，全空）；系统级 tool 在 registry.listFor 内自动包含
-  const grantedNames: string[] = []
+  // V1.1: 所有 standard tool（file/shell）默认授权给员工 —— 单用户本地引擎，等同于用户在终端跑命令。
+  const grantedNames: string[] = services.standardToolNames ?? []
   const visibleTools = services.toolRegistry.listFor(grantedNames)
   const tools = visibleTools
     .map((t) => buildLLMTool(t, services))

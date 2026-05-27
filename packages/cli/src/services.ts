@@ -16,8 +16,10 @@ import { createLLMClient } from '@ai-emp/llm'
 import {
   ToolExecutor,
   registerSystemTools,
+  registerFileTools,
   registry as toolsRegistry,
   SYSTEM_TOOL_NAMES,
+  FILE_TOOL_NAMES,
 } from '@ai-emp/tools'
 import type { RuntimeServices, LLMFactory } from '@ai-emp/core/runtime'
 import { dbPath } from './config.js'
@@ -39,6 +41,7 @@ export async function bootServices(): Promise<BootResult> {
   const bus = new TypedEventBus<EventMap>()
 
   registerSystemTools()
+  registerFileTools()
   const executor = new ToolExecutor(toolsRegistry)
 
   const llmFactory: LLMFactory = {
@@ -72,6 +75,8 @@ export async function bootServices(): Promise<BootResult> {
           : never
       },
     },
+    // V1.1: 所有 file/shell tool 默认对全部员工授权
+    standardToolNames: FILE_TOOL_NAMES,
     toolJsonSchema: (name) => {
       const def = toolsRegistry.get(name)
       if (!def) return undefined

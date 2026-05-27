@@ -91,6 +91,8 @@ export interface RuntimeServices {
   llm: LLMFactory
   toolRegistry: RuntimeToolRegistry
   toolExecutor: RuntimeToolExecutor
+  /** V1.1: 已注册的所有 standard tool 名（file/shell 等）；默认对所有员工授权（单用户本地引擎，无沙箱） */
+  standardToolNames?: string[]
   /** 调用方注入 tool 名 → JSON Schema 映射（给 LLM tools 用） */
   toolJsonSchema(name: string): Record<string, unknown> | undefined
   /** 可选：注入 memory 服务以启用 RAG；缺省走 minimal prompt */
