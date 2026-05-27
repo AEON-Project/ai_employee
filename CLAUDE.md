@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`4fbea13` feat(logging): 结构化 NDJSON 日志体系 + 「日志先行」工程纪律
+> 最近：`5b6b3f8` fix(runtime): ask_user args 健壮化 + dispatch 抛错走 systemPause
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
