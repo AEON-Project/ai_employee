@@ -611,6 +611,72 @@ describe('executeRequirement', () => {
     expect(repos.requirements.findById(reqId)!.status).toBe('待验收')
   })
 
+  test('V1.4: LLM 429 错误自动退避重试，不立即 system_pause', async () => {
+    const { services, repos, reqId, empId } = setup([
+      // turn 0: LLM 返回 429 error chunk
+      [
+        {
+          type: 'error',
+          error: {
+            message:
+              '429 Rate limit reached for gpt-4o. Please try again in 100ms. Visit https://platform.openai.com/account/rate-limits',
+            kind: 'rate_limit',
+            retryable: true,
+          },
+        },
+      ],
+      // turn 1（重试后）: 正常 emit_deliverable
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_deliverable',
+          args: { summary: '完成', contentText: 'OK' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    const r = await executeRequirement(reqId, services, { maxLlmRetries: 3 })
+    // 应该走完到 delivered（而不是 paused）
+    expect(r.exit).toBe('delivered')
+    expect(repos.requirements.findById(reqId)!.status).toBe('待验收')
+  })
+
+  test('V1.4: 永久错误（auth / schema）不重试，直接 system_pause', async () => {
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'error',
+          error: {
+            message: '401 Unauthorized: invalid api key',
+            kind: 'auth',
+            retryable: false,
+          },
+        },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    const r = await executeRequirement(reqId, services, { maxLlmRetries: 3 })
+    expect(r.exit).toBe('paused')
+    expect(repos.requirements.findById(reqId)!.status).toBe('已暂停')
+  })
+
+  test('V1.4: 重试次数超限后 system_pause', async () => {
+    // 所有 turn 都返回 429
+    const errorScript: RuntimeLLMChunk[] = [
+      {
+        type: 'error',
+        error: { message: '429 rate limit, try again in 50ms', kind: 'rate', retryable: true },
+      },
+    ]
+    const { services, repos, reqId, empId } = setup([errorScript])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    const r = await executeRequirement(reqId, services, { maxLlmRetries: 2 })
+    expect(r.exit).toBe('paused')
+    expect(repos.requirements.findById(reqId)!.status).toBe('已暂停')
+  })
+
   test('resumeRequirement 复位 budgetUsed（防 resume 立刻再撞 cap）', () => {
     const { services, repos, reqId, empId } = setup([])
     assignRequirement(services, reqId, empId, { skipClarification: true })

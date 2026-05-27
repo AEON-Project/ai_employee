@@ -38,9 +38,41 @@ type ExitKind = 'paused' | 'awaiting_user' | 'delivered' | 'forced_end'
 export interface ExecuteOptions {
   /** 单次循环最大轮数（防止本进程内死循环；与 budget.maxIterations 不同） */
   maxLoops?: number
+  /** LLM 临时错误（429 / 5xx / 网络）的最大重试次数；默认 5 */
+  maxLlmRetries?: number
 }
 
 const DEFAULT_MAX_LOOPS = 50
+const DEFAULT_MAX_LLM_RETRIES = 5
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+/**
+ * V1.4: LLM 调用错误分类 —— 决定是否可重试 + 退避时长。
+ *   - 429 / rate limit：尽量从错误文本提取 retry-after，加 buffer
+ *   - 5xx / 网络抖动：固定 3s
+ *   - 其他（401/403/schema 错误等）：不重试
+ */
+function analyzeLlmError(msg: string): {
+  retryable: boolean
+  delayMs: number
+  reason: 'rate_limit' | 'transient_network' | 'permanent'
+} {
+  const m429 = /try again in\s+([\d.]+)\s*(ms|s)\b/i.exec(msg)
+  if (m429 || /\b429\b|rate[\s-]?limit/i.test(msg)) {
+    let delayMs = 2000
+    if (m429) {
+      const v = parseFloat(m429[1]!)
+      delayMs = m429[2]!.toLowerCase() === 'ms' ? v : v * 1000
+    }
+    // 加 buffer 避免精确同步再撞；至少 1.5s
+    return { retryable: true, delayMs: Math.max(delayMs + 500, 1500), reason: 'rate_limit' }
+  }
+  if (/\b5\d\d\b|ETIMEDOUT|ECONNRESET|ENOTFOUND|EPIPE|fetch failed|socket hang up/i.test(msg)) {
+    return { retryable: true, delayMs: 3000, reason: 'transient_network' }
+  }
+  return { retryable: false, delayMs: 0, reason: 'permanent' }
+}
 
 export async function executeRequirement(
   reqId: RequirementId,
@@ -124,6 +156,9 @@ export async function executeRequirement(
     )
 
   const maxLoops = opts.maxLoops ?? DEFAULT_MAX_LOOPS
+  // V1.4: LLM 调用临时错误（429 / 5xx / 网络）的退避重试计数（成功一轮后归零）
+  let llmRetries = 0
+  const MAX_LLM_RETRIES = opts.maxLlmRetries ?? DEFAULT_MAX_LLM_RETRIES
 
   for (let loop = 0; loop < maxLoops; loop++) {
     // ① Budget gate
@@ -181,31 +216,36 @@ export async function executeRequirement(
     })
     let chunkCount = 0
     let firstChunkMs: number | undefined
-    for await (const chunk of llm.stream({
-      system: prompt.system,
-      messages: prompt.messages,
-      tools,
-      ...(cacheBp && cacheBp.length > 0 ? { cacheBreakpoints: cacheBp } : {}),
-      ...(employee.modelTemperature == null ? {} : { temperature: employee.modelTemperature }),
-      ...(employee.modelMaxTokens == null ? {} : { maxTokens: employee.modelMaxTokens }),
-    })) {
-      chunkCount++
-      if (chunkCount === 1) {
-        firstChunkMs = Math.round(performance.now() - llmT0)
-        log.info('llm.call.first_chunk', { reqId, firstChunkMs, chunkType: chunk.type })
+    try {
+      for await (const chunk of llm.stream({
+        system: prompt.system,
+        messages: prompt.messages,
+        tools,
+        ...(cacheBp && cacheBp.length > 0 ? { cacheBreakpoints: cacheBp } : {}),
+        ...(employee.modelTemperature == null ? {} : { temperature: employee.modelTemperature }),
+        ...(employee.modelMaxTokens == null ? {} : { maxTokens: employee.modelMaxTokens }),
+      })) {
+        chunkCount++
+        if (chunkCount === 1) {
+          firstChunkMs = Math.round(performance.now() - llmT0)
+          log.info('llm.call.first_chunk', { reqId, firstChunkMs, chunkType: chunk.type })
+        }
+        const out = handleChunk(chunk, { buffer: streamBuffer, budget })
+        if (out.kind === 'tool') {
+          decision = out.call
+          break
+        }
+        if (out.kind === 'text') textBuf += out.text
+        if (out.kind === 'error') {
+          llmError = out.message
+          break
+        }
+        if (out.kind === 'stop') saw_stop = true
+        if (decision) break
       }
-      const out = handleChunk(chunk, { buffer: streamBuffer, budget })
-      if (out.kind === 'tool') {
-        decision = out.call
-        break
-      }
-      if (out.kind === 'text') textBuf += out.text
-      if (out.kind === 'error') {
-        llmError = out.message
-        break
-      }
-      if (out.kind === 'stop') saw_stop = true
-      if (decision) break
+    } catch (e) {
+      // provider 直接抛错（非 yield error chunk 路径，如 fetch 网络中断）
+      llmError = e instanceof Error ? e.message : String(e)
     }
     // 兜底 flush：provider 没发 message_stop / tool_use_stop / error，
     // 直接断流时仍要把累积的 text 落库。
@@ -213,8 +253,24 @@ export async function executeRequirement(
     const llmMs = Math.round(performance.now() - llmT0)
     if (llmError) {
       log.error('llm.call.error', { reqId, error: llmError, ms: llmMs, chunks: chunkCount })
+      // V1.4: 临时错误（429 / 5xx / 网络）→ 退避重试，不立即 system_pause
+      const r = analyzeLlmError(llmError)
+      if (r.retryable && llmRetries < MAX_LLM_RETRIES) {
+        llmRetries++
+        log.warn('llm.retry', {
+          reqId,
+          attempt: llmRetries,
+          maxAttempts: MAX_LLM_RETRIES,
+          delayMs: r.delayMs,
+          reason: r.reason,
+        })
+        await sleep(r.delayMs)
+        continue // 重进 for loop（重新 budget check + compose + stream）
+      }
       return systemPause(services, reqId, 'llm_error', llmError)
     }
+    // 成功一轮后重置 retry 计数（下次再撞限流还能用满 MAX_LLM_RETRIES）
+    llmRetries = 0
     log.info('llm.call.end', {
       reqId,
       ms: llmMs,
