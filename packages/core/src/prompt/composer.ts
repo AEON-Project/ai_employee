@@ -199,6 +199,18 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
       '       **不要**把澄清问题写在 text 输出中；text 只放概述，问题列表只在 questions 字段。',
       '- 默认行为：当本步骤产出已写入交付，**必须** 调用 advance_step',
       '- 严格遵守"项目规范 required"；recommended 视相关性引用',
+      '',
+      '### 文件 / Shell 工具使用规则（防路径幻觉 + 防假装完成）',
+      '- **Edit / Read / Write 的 path 必须来自之前 Glob / Grep / Read 的真实返回**；',
+      '  禁止凭印象编路径（典型错误：根据模块名猜目录名却没用 Glob 验证过）。',
+      '- 第一次接触一个项目目录时，**先 Glob 探索结构**（如 `**/*.java` 或 `*` 看顶层），',
+      '  再决定 Edit 哪个文件。**不要**在没探索过的子目录里直接 Edit。',
+      '- 如果 tool_result 返回 ENOENT / "not found" / ok=false：',
+      '  · **立刻**用 Glob 重新探索该文件可能的真实位置（如 `**/<filename>`）；',
+      '  · 不要重复 Edit 同一个错误 path；不要把失败的 step 假装标 done。',
+      '- ⛔ tool_result.ok=false 时**严禁**调用 advance_step。',
+      '  引擎会硬阻止并要求你先修复（用 Glob/Read 找到正确 path 再 Edit 成功）。',
+      '- 完成本步骤后调 advance_step 前，确认最近一次工具调用是成功的（ok=true）。',
     ].join('\n'),
   )
 

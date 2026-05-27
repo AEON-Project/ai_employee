@@ -472,6 +472,66 @@ describe('executeRequirement', () => {
     expect(rs.historySummary).toContain('[step 0] 完成调研')
   })
 
+  test('V1.2: 上一 tool_result ok=false 时 advance_step 被硬阻止 + 写 error message', async () => {
+    const { services, repos, reqId, empId } = setup([
+      // turn 0: 调用一个不存在的 tool（mockExecutor 返回 ok=false）
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'NonExistentTool',
+          args: {},
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 1: LLM 不管错误就 advance_step
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'advance_step',
+          args: { step_idx: 0, summary: '假装完成' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 2: emit_deliverable 兜底（避免循环）
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't3',
+          name: 'emit_deliverable',
+          args: { summary: '收尾', contentText: 'x' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    repos.requirements.setPlan(reqId, {
+      steps: [
+        { idx: 0, text: 's0', status: 'pending' },
+        { idx: 1, text: 's1', status: 'pending' },
+      ],
+    })
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    // 应该有一条 system/error 提示 advance_step 被阻止
+    const blocked = msgs.find(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes('advance_step 已阻止'),
+    )
+    expect(blocked).toBeDefined()
+    // plan.steps[0] 不应被错误标 done
+    const plan = repos.requirements.findById(reqId)!.planJson!
+    expect(plan.steps[0]!.status).toBe('pending')
+    // currentStep 也不应推进
+    const rs = repos.runtimeState.find(reqId)!
+    expect(rs.currentStep).toBe(0)
+  })
+
   test('resumeRequirement 复位 budgetUsed（防 resume 立刻再撞 cap）', () => {
     const { services, repos, reqId, empId } = setup([])
     assignRequirement(services, reqId, empId, { skipClarification: true })

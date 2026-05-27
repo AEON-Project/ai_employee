@@ -413,6 +413,43 @@ async function dispatch(
       const args = call.args as { step_idx?: number; summary?: string }
       const completedIdx =
         typeof args.step_idx === 'number' && args.step_idx >= 0 ? args.step_idx : ctx.currentStep
+      // V1.2 (2): 上一次 tool 调用失败时硬阻止 advance（防 LLM 假装完成）
+      //   扫最近 10 条 message，找最近一条 tool_result；若 ok=false → 拒绝，
+      //   写一条 system/error 让 LLM 下一轮看到，并不更新 plan / currentStep / historySummary。
+      const recent = repos.messages.tailByThread(thread.id, 10)
+      for (let i = recent.length - 1; i >= 0; i--) {
+        const m = recent[i]!
+        if (m.type !== 'tool_result') continue
+        const tr = m.contentJson as { ok?: boolean; error?: string }
+        if (tr.ok === false) {
+          const errMsg = tr.error ?? 'unknown'
+          log.warn('advance_step.blocked', {
+            reqId,
+            lastToolError: errMsg,
+            attemptedStep: completedIdx,
+          })
+          repos.messages.append({
+            threadId: thread.id,
+            role: 'system',
+            type: 'error',
+            content: {
+              type: 'error',
+              message: `advance_step 已阻止：上一次工具调用失败 (${errMsg.slice(0, 200)})。必须先修复（用 Glob/Read 找到正确路径再 Edit），不能跳过失败标记 step done。`,
+              fatal: false,
+            },
+          })
+          // 不推进 plan / step / history；让 LLM 下一轮重试
+          return {
+            kind: 'continue',
+            newState: {
+              currentStep: ctx.currentStep,
+              historySummary: ctx.historySummary,
+              budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+            },
+          }
+        }
+        break // 最近一条 tool_result 是 ok=true → 放行
+      }
       // ① 更新 plan：把 idx <= completedIdx 的 step 标 done（容忍 LLM 跳号）
       const reqRow = repos.requirements.findById(reqId)
       if (reqRow?.planJson) {
