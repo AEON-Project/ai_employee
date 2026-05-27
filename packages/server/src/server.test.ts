@@ -290,6 +290,69 @@ describe('Requirement 命令', () => {
   })
 })
 
+describe('Scheduler 派单触发', () => {
+  test('HTTP /assign(skip) 触发 scheduler.enqueue；/clarifications/answer 也触发', async () => {
+    // 独立 server + 注入 fake scheduler
+    const ctx = mkServices()
+    const enqueued: string[] = []
+    const localHandle = createServer({
+      port: 0,
+      dataDir: '/tmp',
+      token: TOKEN,
+      services: ctx.services,
+      scheduler: { enqueue: (id) => enqueued.push(id) },
+    })
+    const { port: localPort } = await localHandle.start()
+    const localBase = `http://localhost:${localPort}`
+    const headers = { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` }
+    const post = async (p: string, body?: unknown) => {
+      const r = await fetch(`${localBase}${p}`, {
+        method: 'POST',
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+      })
+      const json = await r.json().catch(() => null)
+      return { status: r.status, json }
+    }
+    try {
+      const cred = await ctx.services.credentials.create({ kind: 'llm_key', secret: 'k' })
+      const emp = await post('/api/employees', {
+        name: 'e',
+        role: 'r',
+        modelProvider: 'anthropic',
+        modelName: 'm',
+        modelKeyRef: cred.keychainKey,
+      })
+      const eid = (emp.json as { id: string }).id
+
+      // skip clarification → 直接 进行中 → 应触发 enqueue
+      const r1 = await post('/api/requirements', { title: 'T1', description: 'D' })
+      const rid1 = (r1.json as { id: string }).id
+      await post(`/api/requirements/${rid1}/assign`, { employeeId: eid, skipClarification: true })
+      expect(enqueued).toContain(rid1)
+
+      // 走澄清路径：assign 后是 待澄清（不触发），answer 后才 进行中（触发）
+      const r2 = await post('/api/requirements', { title: 'T2', description: 'D' })
+      const rid2 = (r2.json as { id: string }).id
+      await post(`/api/requirements/${rid2}/assign`, { employeeId: eid })
+      expect(enqueued).not.toContain(rid2)
+
+      const dr = await post(`/api/requirements/${rid2}/clarify/draft`, {
+        employeeUnderstanding: 'OK',
+        proposedPlan: ['a'],
+        questions: [{ question: 'q?' }],
+      })
+      const cid = (dr.json as { id: string }).id
+      await post(`/api/clarifications/${cid}/answer`, {
+        answers: [{ question: 'q?', answer: 'a' }],
+      })
+      expect(enqueued).toContain(rid2)
+    } finally {
+      await localHandle.stop()
+    }
+  })
+})
+
 describe('WebSocket', () => {
   test('/ws/global 收到 EventBus 事件', async () => {
     const port = handle.port!

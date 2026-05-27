@@ -17,12 +17,19 @@ import type { RuntimeServices } from '@ai-emp/core/runtime'
 import { mountApi } from './api.js'
 import { makeWsHandlers, mountWs } from './ws.js'
 
+/** 调度器接口（运行时实际是 RequirementScheduler；这里只暴露 enqueue 给 api 用，避免循环依赖） */
+export interface SchedulerLike {
+  enqueue(reqId: string): void
+}
+
 export interface ServerDeps {
   services: RuntimeServices
   token: string
   dataDir: string
   /** Web UI dist 目录的绝对路径；缺省走占位首页 */
   webDistDir?: string
+  /** 调度器；不传则 HTTP 派单不会触发 executeRequirement（仅 e2e 测试场景） */
+  scheduler?: SchedulerLike
 }
 
 export interface CreateServerOptions extends ServerDeps {

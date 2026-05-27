@@ -109,17 +109,20 @@ export async function cmdServe(args: { port?: number }): Promise<number> {
 
   const boot = await bootServices()
   const webDistDir = findWebDist()
+
+  // 启动 scheduler（α 串行）— 必须先于 createServer，让 HTTP /assign 路由能拿到
+  const scheduler = RequirementScheduler.bindServices(boot.services, { maxConcurrent: 1 })
+
   const handle = createServer({
     port,
     dataDir: dataDir(),
     token,
     services: boot.services,
+    scheduler,
     ...(webDistDir ? { webDistDir } : {}),
   })
   const { port: actualPort } = await handle.start()
 
-  // 启动 scheduler（α 串行）
-  const scheduler = RequirementScheduler.bindServices(boot.services, { maxConcurrent: 1 })
   // 把 in-flight 需求 enqueue 续跑
   const recover = scanInflight(boot.services)
   for (const r of recover.inflight) {

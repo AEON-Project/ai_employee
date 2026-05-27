@@ -32,6 +32,13 @@ export function mountApi(app: Hono, deps: ServerDeps) {
   const { repos } = services
   const api = new Hono()
 
+  /** 若需求状态为「进行中」则推入调度器执行；其他状态忽略 */
+  function enqueueIfRunning(reqId: string) {
+    if (!deps.scheduler) return
+    const r = repos.requirements.findById(reqId)
+    if (r?.status === '进行中') deps.scheduler.enqueue(reqId)
+  }
+
   // ── projects ─────────────────────────────────────────────
   api.get('/projects', (c) => c.json(repos.projects.list()))
   api.post('/projects', async (c) => {
@@ -231,9 +238,11 @@ export function mountApi(app: Hono, deps: ServerDeps) {
       .object({ employeeId: z.string().min(1), skipClarification: z.boolean().optional() })
       .safeParse(body)
     if (!parsed.success) return c.json({ error: 'invalid', issues: parsed.error.issues }, 400)
-    const r = assignRequirement(services, c.req.param('id'), parsed.data.employeeId, {
+    const reqId = c.req.param('id')
+    const r = assignRequirement(services, reqId, parsed.data.employeeId, {
       skipClarification: parsed.data.skipClarification,
     })
+    enqueueIfRunning(reqId)
     return c.json(r)
   })
 
@@ -242,7 +251,9 @@ export function mountApi(app: Hono, deps: ServerDeps) {
     return c.json({ ok: true })
   })
   api.post('/requirements/:id/resume', (c) => {
-    resumeRequirement(services, c.req.param('id'))
+    const reqId = c.req.param('id')
+    resumeRequirement(services, reqId)
+    enqueueIfRunning(reqId)
     return c.json({ ok: true })
   })
   api.post('/requirements/:id/cancel', (c) => {
@@ -303,6 +314,7 @@ export function mountApi(app: Hono, deps: ServerDeps) {
       .safeParse(body)
     if (!parsed.success) return c.json({ error: 'invalid', issues: parsed.error.issues }, 400)
     const r = answerClarification(services, c.req.param('id'), parsed.data.answers)
+    enqueueIfRunning(r.reqId)
     return c.json(r)
   })
 
