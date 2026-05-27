@@ -236,15 +236,24 @@ export async function executeRequirement(
       // 没 tool_call 也没 stop —— stream 异常退出
       return systemPause(services, reqId, 'llm_error', 'stream ended without decision')
     }
-    const exit = await dispatch(decision, {
-      services,
-      reqId,
-      thread,
-      employee,
-      currentStep: execState.currentStep,
-      plan: req.planJson ?? null,
-      grantedNames,
-    })
+    let exit: Awaited<ReturnType<typeof dispatch>>
+    try {
+      exit = await dispatch(decision, {
+        services,
+        reqId,
+        thread,
+        employee,
+        currentStep: execState.currentStep,
+        plan: req.planJson ?? null,
+        grantedNames,
+      })
+    } catch (e) {
+      // dispatch 抛错（LLM args 不符合 schema / 工具内部 bug 等）→ systemPause 而不是冒泡，
+      // 让状态从「进行中」转「已暂停」、错误可见、用户可恢复。
+      const msg = e instanceof Error ? e.message : String(e)
+      log.error('dispatch.failed', { reqId, tool: decision.name, args: decision.args, error: msg })
+      return systemPause(services, reqId, 'system', `dispatch ${decision.name} failed: ${msg}`)
+    }
 
     // ⑤ Persist + emit frame
     if (exit.kind === 'continue') {
@@ -398,14 +407,47 @@ async function dispatch(
       }
     }
     case 'ask_user': {
-      const args = call.args as {
-        questions: { question: string; answerMode?: 'user' | 'auto_proceed' }[]
-        trigger_reason: string
+      // LLM args 形状不一定守约 — 容错地归一化
+      const raw = (call.args ?? {}) as {
+        questions?: unknown
+        question?: unknown
+        trigger_reason?: string
+        trigger?: string
       }
+      type Q = { question: string; answerMode?: 'user' | 'auto_proceed' }
+      let questions: Q[] = []
+      if (Array.isArray(raw.questions)) {
+        questions = (raw.questions as unknown[])
+          .map((q) => {
+            if (typeof q === 'string') return { question: q }
+            if (q && typeof q === 'object' && 'question' in q) {
+              const obj = q as { question: unknown; answerMode?: unknown }
+              return typeof obj.question === 'string'
+                ? {
+                    question: obj.question,
+                    answerMode:
+                      obj.answerMode === 'auto_proceed' || obj.answerMode === 'user'
+                        ? obj.answerMode
+                        : undefined,
+                  }
+                : null
+            }
+            return null
+          })
+          .filter((q): q is Q => q !== null)
+      } else if (typeof raw.question === 'string') {
+        questions = [{ question: raw.question }]
+      }
+      if (questions.length === 0) {
+        throw new Error(
+          `ask_user invalid args: expected non-empty 'questions' array, got ${JSON.stringify(call.args).slice(0, 200)}`,
+        )
+      }
+      const trigger = (raw.trigger_reason ?? raw.trigger ?? 'execution') as string
       const round = repos.clarifications.create({
         requirementId: reqId,
-        trigger: args.trigger_reason as never,
-        questions: args.questions.map((q) => ({
+        trigger: trigger as never,
+        questions: questions.map((q) => ({
           question: q.question,
           answerMode: q.answerMode ?? 'user',
         })),
@@ -415,7 +457,7 @@ async function dispatch(
         threadId: thread.id,
         role: 'assistant',
         type: 'clarification_request',
-        content: { type: 'text', text: args.questions.map((q) => q.question).join('\n') },
+        content: { type: 'text', text: questions.map((q) => q.question).join('\n') },
       })
       // 状态转移：进行中 → 等待回答
       const t = transition('进行中', { kind: 'ask_user' })
