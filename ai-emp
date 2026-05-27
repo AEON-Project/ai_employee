@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# ai-emp · 开发期 CLI shortcut
+#
+# 直接转发到源码入口，免去每次写 `bun packages/cli/src/index.ts`。
+# 生产用编译后的二进制：`bun build packages/cli/src/index.ts --compile --outfile dist/ai-emp`
+#
+# 用法：
+#   ./ai-emp init
+#   ./ai-emp keychain set claude-main sk-ant-xxx
+#   ./ai-emp serve
+#
+# 把它加入 PATH（如 alias / ln -s）即可全局用。
+
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec bun "$SCRIPT_DIR/packages/cli/src/index.ts" "$@"

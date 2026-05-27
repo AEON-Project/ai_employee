@@ -8,7 +8,9 @@
   ],
   "scripts": {
     "postinstall": "bun run scripts/postinstall.ts",
+    "ai-emp": "bun packages/cli/src/index.ts",
     "build": "bun run --filter '*' build",
+    "build:cli": "bun build packages/cli/src/index.ts --compile --outfile dist/ai-emp",
     "test": "bun test",
     "typecheck": "tsc -b",
     "format": "prettier --write \"packages/*/src/**/*.{ts,tsx,json}\"",

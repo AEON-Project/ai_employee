@@ -25,6 +25,10 @@ cd packages/web && bun run build && cd ../..
 
 > Web UI 嵌入到 server 静态目录；不构建也能跑 CLI，但 `http://localhost:7878` 会是占位首页。
 
+后续命令统一用项目根的 `./ai-emp` shell wrapper（已附带可执行权限），它转发到 `bun packages/cli/src/index.ts`。也可：
+- `alias ai-emp="$(pwd)/ai-emp"` 全局短化
+- 或 `bun build` 出二进制（见 §7）
+
 ## 3. 首次配置
 
 ### 3.1 可选：用 `.env` 自定义
@@ -46,7 +50,7 @@ cp .env.example .env
 ### 3.2 init
 
 ```bash
-bun packages/cli/src/index.ts init
+./ai-emp init
 ```
 
 会做三件事：
@@ -74,10 +78,10 @@ echo "AIEMP_ANTHROPIC_API_KEY=sk-ant-XXX" >> .env
 
 ```bash
 # 命令行直传
-bun packages/cli/src/index.ts keychain set claude-main sk-ant-XXX
+./ai-emp keychain set claude-main sk-ant-XXX
 
 # 或环境变量（避免在 shell history 留痕）
-AIEMP_SECRET="sk-ant-XXX" bun packages/cli/src/index.ts keychain set claude-main
+AIEMP_SECRET="sk-ant-XXX" ./ai-emp keychain set claude-main
 ```
 
 员工 `modelKeyRef` 填 `claude-main`（即 keychain 中的 key 名）。
@@ -87,7 +91,7 @@ AIEMP_SECRET="sk-ant-XXX" bun packages/cli/src/index.ts keychain set claude-main
 ## 5. 启动服务
 
 ```bash
-bun packages/cli/src/index.ts serve
+./ai-emp serve
 ```
 
 输出类似：

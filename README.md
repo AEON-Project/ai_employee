@@ -36,16 +36,21 @@ bun run scripts/postinstall.ts
 cd packages/web && bun run build && cd ../..
 
 # 4. 首次配置
-bun packages/cli/src/index.ts init
+./ai-emp init
 
-# 5. 写入你的 LLM Key
-bun packages/cli/src/index.ts keychain set claude-main sk-ant-xxxx
+# 5. 写入你的 LLM Key（任选一种）
+./ai-emp keychain set claude-main sk-ant-xxxx     # 走 OS Keychain
+# 或：echo "AIEMP_ANTHROPIC_API_KEY=sk-ant-xxxx" >> .env  # 走 .env
 
 # 6. 启动服务
-bun packages/cli/src/index.ts serve
+./ai-emp serve
 ```
 
 启动后会打印浏览器登录链接 `http://localhost:7878/auth?token=XXX`，点开就能用。
+
+> `./ai-emp` 是项目根的 shell wrapper（转发到 `bun packages/cli/src/index.ts`）。
+> `alias ai-emp="$(pwd)/ai-emp"` 后可省略 `./`。
+> 编译单二进制：`bun build packages/cli/src/index.ts --compile --outfile dist/ai-emp`。
 
 **完整步骤、命令清单、排错** → [GETTING_STARTED.md](./GETTING_STARTED.md)
 
@@ -67,12 +72,12 @@ bun packages/cli/src/index.ts serve
 
 ```bash
 # 凭证走 keychain
-ai-emp keychain set tg-bot-token <bot-token>
+./ai-emp keychain set tg-bot-token <bot-token>
 
 # 白名单在 .env（或 config.toml）：
 echo "AIEMP_TG_CHAT_IDS=12345678" >> .env
 
-ai-emp serve
+./ai-emp serve
 ```
 
 支持的命令：
