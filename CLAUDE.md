@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`c4ad1f9` fix(runtime): V1.4 LLM 调用 429/5xx/网络错误自动退避重试，不再立即 system_pause
+> 最近：`0d45d1a` feat(tools): V1.1 简化为纯 Bash 透传（删 Read/Write/Edit/Glob/Grep），LLM 用命令行自由完成任务
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
