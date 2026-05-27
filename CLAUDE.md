@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`4e0aa4e` feat(mcp-client): V2 O6 MCP client — 接入 Model Context Protocol 工具生态；stdio MCP 协议极简实现 + McpManager 多 server + 自动注册到 ToolRegistry (mcp_<server>_<tool>)
+> 最近：`1bcef69` feat(tools): V2 O7 PTY 支持 — Bash 工具加 pty:true 走伪 tty（用系统 `script` 命令包装，避免 node-pty native binding）— mvn/gradlew/npm install 检测 isTTY 能正常输出
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
