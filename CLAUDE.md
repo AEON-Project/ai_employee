@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`ee728f8` revert(runtime): 拆 V1.3 emit_deliverable 对账（借鉴 OpenClaw），员工提交后由用户验收鉴别真假
+> 最近：`fe47ebd` feat(web): 「待验收」自动显示 Git Diff（projects.workdir + git-diff API + UI panel）
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
