@@ -19,6 +19,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <NavLink to="/" label="仪表" />
             <NavLink to="/projects" label="项目" />
             <NavLink to="/employees" label="员工" />
+            <NavLink to="/skills" label="技能" />
             <NavLink to="/new" label="新建需求" />
           </nav>
         </div>

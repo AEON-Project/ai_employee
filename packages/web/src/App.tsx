@@ -2,7 +2,10 @@ import { Layout } from './components/Layout'
 import { useRoute } from './store/router'
 import { HomePage } from './pages/Home'
 import { ProjectsPage } from './pages/Projects'
+import { ProjectDetailPage } from './pages/ProjectDetail'
 import { EmployeesPage } from './pages/Employees'
+import { EmployeeDetailPage } from './pages/EmployeeDetail'
+import { SkillsPage } from './pages/Skills'
 import { NewRequirementPage } from './pages/NewRequirement'
 import { RequirementDetailPage } from './pages/RequirementDetail'
 
@@ -17,16 +20,18 @@ function render(route: ReturnType<typeof useRoute>): React.ReactNode {
       return <HomePage />
     case 'projects':
       return <ProjectsPage />
+    case 'project':
+      return <ProjectDetailPage id={route.id} />
     case 'employees':
       return <EmployeesPage />
+    case 'employee':
+      return <EmployeeDetailPage id={route.id} />
+    case 'skills':
+      return <SkillsPage />
     case 'new':
       return <NewRequirementPage />
     case 'req':
       return <RequirementDetailPage reqId={route.id} />
-    case 'project':
-      return <p>项目详情（最小版未实现，请回首页或编辑 API）。id={route.id}</p>
-    case 'employee':
-      return <p>员工详情（最小版未实现）。id={route.id}</p>
     default:
       return <p>404 — 路由不存在</p>
   }

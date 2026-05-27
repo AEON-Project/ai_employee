@@ -142,6 +142,24 @@ export class EmployeesRepo {
     this.db.update(employees).set({ memoryStyleText: style }).where(eq(employees.id, id)).run()
   }
 
+  update(
+    id: string,
+    patch: Partial<{
+      name: string
+      role: string
+      persona: string
+      modelProvider: LLMProvider
+      modelName: string
+      modelKeyRef: string
+      modelBaseUrl: string | null
+      modelTemperature: number | null
+      modelMaxTokens: number | null
+    }>,
+  ) {
+    if (Object.keys(patch).length === 0) return
+    this.db.update(employees).set(patch).where(eq(employees.id, id)).run()
+  }
+
   updateStats(id: string, stats: EmployeeStats) {
     this.db.update(employees).set({ statsJson: stats }).where(eq(employees.id, id)).run()
   }
@@ -221,6 +239,32 @@ export class SkillsRepo {
       .where(eq(employeeSkills.employeeId, employeeId))
       .orderBy(asc(employeeSkills.order))
       .all()
+  }
+
+  update(
+    id: string,
+    patch: Partial<{
+      name: string
+      category: SkillCategory
+      description: string
+      promptTemplate: string
+      requiredTools: string[]
+      examples: SkillExample[]
+    }>,
+  ) {
+    const dbPatch: Partial<typeof skills.$inferInsert> = {}
+    if (patch.name !== undefined) dbPatch.name = patch.name
+    if (patch.category !== undefined) dbPatch.category = patch.category
+    if (patch.description !== undefined) dbPatch.description = patch.description
+    if (patch.promptTemplate !== undefined) dbPatch.promptTemplate = patch.promptTemplate
+    if (patch.requiredTools !== undefined) dbPatch.requiredToolsJson = patch.requiredTools
+    if (patch.examples !== undefined) dbPatch.examplesJson = patch.examples
+    if (Object.keys(dbPatch).length === 0) return
+    this.db.update(skills).set(dbPatch).where(eq(skills.id, id)).run()
+  }
+
+  delete(id: string) {
+    this.db.delete(skills).where(eq(skills.id, id)).run()
   }
 }
 // 兼容 `import { skills }` 用法（drizzle table）

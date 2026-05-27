@@ -6,6 +6,7 @@
  *   #/projects/:id           Project detail
  *   #/employees              Employees list
  *   #/employees/:id          Employee detail
+ *   #/skills                 Skills management
  *   #/new                    New requirement
  */
 
@@ -18,6 +19,7 @@ export type Route =
   | { name: 'project'; id: string }
   | { name: 'employees' }
   | { name: 'employee'; id: string }
+  | { name: 'skills' }
   | { name: 'new' }
   | { name: 'unknown' }
 
@@ -26,6 +28,7 @@ export function parseHash(hash: string): Route {
   if (h === '' || h === 'home') return { name: 'home' }
   if (h === 'projects') return { name: 'projects' }
   if (h === 'employees') return { name: 'employees' }
+  if (h === 'skills') return { name: 'skills' }
   if (h === 'new') return { name: 'new' }
   const m1 = /^req\/([\w-]+)$/.exec(h)
   if (m1) return { name: 'req', id: m1[1]! }

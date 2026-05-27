@@ -89,6 +89,34 @@ export function mountApi(app: Hono, deps: ServerDeps) {
     const r = repos.employees.findById(c.req.param('id'))
     return r ? c.json(r) : c.json({ error: 'not_found' }, 404)
   })
+  api.patch('/employees/:id', async (c) => {
+    const body = await c.req.json()
+    const parsed = z
+      .object({
+        name: z.string().min(1).optional(),
+        role: z.string().min(1).optional(),
+        persona: z.string().optional(),
+        modelProvider: z.enum(['anthropic', 'openai-compat']).optional(),
+        modelName: z.string().min(1).optional(),
+        modelKeyRef: z.string().min(1).optional(),
+        modelBaseUrl: z.string().nullable().optional(),
+        modelTemperature: z.number().nullable().optional(),
+        modelMaxTokens: z.number().nullable().optional(),
+        memoryStyleText: z.string().optional(),
+      })
+      .safeParse(body)
+    if (!parsed.success) return c.json({ error: 'invalid', issues: parsed.error.issues }, 400)
+    const id = c.req.param('id')
+    const { memoryStyleText, ...rest } = parsed.data
+    if (Object.keys(rest).length > 0) {
+      repos.employees.update(id, {
+        ...rest,
+        modelProvider: rest.modelProvider as LLMProvider | undefined,
+      })
+    }
+    if (memoryStyleText !== undefined) repos.employees.updateStyle(id, memoryStyleText)
+    return c.json(repos.employees.findById(id))
+  })
   api.delete('/employees/:id', (c) => {
     repos.employees.archive(c.req.param('id'))
     return c.json({ ok: true })
@@ -113,6 +141,33 @@ export function mountApi(app: Hono, deps: ServerDeps) {
       category: parsed.data.category as SkillCategory,
     })
     return c.json(repos.skills.findById(id), 201)
+  })
+
+  api.get('/skills/:id', (c) => {
+    const r = repos.skills.findById(c.req.param('id'))
+    return r ? c.json(r) : c.json({ error: 'not_found' }, 404)
+  })
+  api.patch('/skills/:id', async (c) => {
+    const body = await c.req.json()
+    const parsed = z
+      .object({
+        name: z.string().min(1).optional(),
+        category: z.enum(['技术', '设计', '内容', '数据', '运营', '通用']).optional(),
+        description: z.string().optional(),
+        promptTemplate: z.string().optional(),
+        requiredTools: z.array(z.string()).optional(),
+      })
+      .safeParse(body)
+    if (!parsed.success) return c.json({ error: 'invalid', issues: parsed.error.issues }, 400)
+    repos.skills.update(c.req.param('id'), {
+      ...parsed.data,
+      category: parsed.data.category as SkillCategory | undefined,
+    })
+    return c.json(repos.skills.findById(c.req.param('id')))
+  })
+  api.delete('/skills/:id', (c) => {
+    repos.skills.delete(c.req.param('id'))
+    return c.json({ ok: true })
   })
 
   api.post('/employees/:id/skills/:skillId', async (c) => {
@@ -291,6 +346,21 @@ export function mountApi(app: Hono, deps: ServerDeps) {
     const kind = c.req.query('kind') as 'fact' | 'pitfall' | 'lesson' | undefined
     if (!scope || !scopeId) return c.json({ error: 'scope and scopeId required' }, 400)
     return c.json(repos.memoryItems.list({ scope, scopeId, kind }))
+  })
+  api.post('/memory/items', async (c) => {
+    const body = await c.req.json()
+    const parsed = z
+      .object({
+        scope: z.enum(['project', 'employee']),
+        scopeId: z.string().min(1),
+        kind: z.enum(['fact', 'pitfall', 'lesson']),
+        content: z.string().min(1),
+        importanceScore: z.number().min(0).max(1).optional(),
+      })
+      .safeParse(body)
+    if (!parsed.success) return c.json({ error: 'invalid', issues: parsed.error.issues }, 400)
+    const id = repos.memoryItems.create(parsed.data)
+    return c.json(repos.memoryItems.findById(id), 201)
   })
   api.post('/memory/items/:id/archive', (c) => {
     repos.memoryItems.archive(c.req.param('id'))
