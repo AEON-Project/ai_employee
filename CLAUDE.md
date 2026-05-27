@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`09bc043` feat(web/thread): 思维链 seq 倒序展示 + 滚动分页加载历史 + 每条消息加时间
+> 最近：`6555d2d` fix(runtime): advance_step 标 plan done + 累积 historySummary + resume 复位 budget（修复 LLM 死循环）
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
