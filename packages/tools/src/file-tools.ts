@@ -48,11 +48,37 @@ interface ProcessSession {
   status: 'running' | 'completed' | 'killed' | 'failed'
   exitCode: number | null
   finishedAt: number | null
+  /** V2 O9: 转后台时记下，进程 close 时通知主进程（让 runtime 自动 re-enqueue 工单） */
+  requirementId?: string
+  threadId?: string
+  /** 是否已通知（防止 read+close race 重复通知） */
+  notified: boolean
+  /** V2 O9: 仅当 yield 真转后台后才允许 notify（同步前台路径不通知） */
+  backgrounded: boolean
 }
 
 const sessions = new Map<string, ProcessSession>()
 
-/** 测试辅助：清空所有 session，杀掉残留进程 */
+/**
+ * V2 O9 notify-on-exit: 进程退出时回调（在 yield 转后台后异步触发）。
+ * caller (cli/services.ts) 注入实现：写 message + bus.emit + scheduler.enqueue。
+ * 默认 noop。
+ */
+export interface ProcessExitEvent {
+  sessionId: string
+  requirementId: string
+  threadId: string
+  command: string
+  status: 'completed' | 'killed' | 'failed'
+  exitCode: number | null
+  durationMs: number
+}
+let processExitNotifier: (e: ProcessExitEvent) => void = () => {}
+export function setProcessExitNotifier(fn: (e: ProcessExitEvent) => void): void {
+  processExitNotifier = fn
+}
+
+/** 测试辅助：清空所有 session，杀掉残留进程 + 还原 notifier */
 export function _resetSessionsForTest(): void {
   for (const s of sessions.values()) {
     try {
@@ -62,6 +88,7 @@ export function _resetSessionsForTest(): void {
     }
   }
   sessions.clear()
+  processExitNotifier = () => {}
 }
 
 // ── Bash ───────────────────────────────────────────────────────
@@ -213,6 +240,11 @@ export const bashTool: ToolDef<BashArgs, BashResult> = {
       status: 'running',
       exitCode: null,
       finishedAt: null,
+      // V2 O9: 记下工单/thread，转后台后进程退出时回调里要用
+      requirementId: ctx.requirementId,
+      threadId: ctx.threadId,
+      notified: false,
+      backgrounded: false,
     }
     sessions.set(sessionId, session)
 
@@ -270,6 +302,29 @@ export const bashTool: ToolDef<BashArgs, BashResult> = {
         session.finishedAt = Date.now()
         session.status = timeoutKilled ? 'killed' : code === 0 ? 'completed' : 'failed'
         resolveDone()
+        // V2 O9 notify-on-exit: 只在 session 已转后台 + 未通知 时触发
+        //   backgrounded=true 由 yield 路径写入；同步前台路径永远 false → 不触发
+        if (
+          session.backgrounded &&
+          !session.notified &&
+          session.requirementId &&
+          session.threadId
+        ) {
+          session.notified = true
+          try {
+            processExitNotifier({
+              sessionId,
+              requirementId: session.requirementId,
+              threadId: session.threadId,
+              command: session.command,
+              status: session.status,
+              exitCode: session.exitCode,
+              durationMs: (session.finishedAt ?? Date.now()) - session.startedAt,
+            })
+          } catch (err) {
+            log.warn('processExitNotifier.error', { sessionId, err: String(err) })
+          }
+        }
       })
     })
 
@@ -281,6 +336,7 @@ export const bashTool: ToolDef<BashArgs, BashResult> = {
 
     if (yielded && session.status === 'running') {
       // 转后台运行：保留 session，返回 partial
+      session.backgrounded = true
       log.info('Bash.yield', {
         cwd,
         cmd: args.command.slice(0, 200),

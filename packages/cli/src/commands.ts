@@ -11,8 +11,11 @@ import { createServer } from '@ai-emp/server'
 import { createBridge, type BridgeHandle } from '@ai-emp/bridge-tg'
 import { scanInflight, RequirementScheduler } from '@ai-emp/core/runtime'
 import { formatReport, sample } from '@ai-emp/core/metrics'
+import { getLogger } from '@ai-emp/domain'
 import { attachmentsDir, dataDir, dbPath, ensureDirs, loadConfig, saveConfig } from './config.js'
 import { bootServices } from './services.js'
+
+const log = getLogger('cli')
 
 /** 查找 packages/web/dist；找到才挂静态资源；没找到（开发态没 build）就走占位首页 */
 function findWebDist(): string | undefined {
@@ -114,6 +117,34 @@ export async function cmdServe(args: { port?: number }): Promise<number> {
   const scheduler = RequirementScheduler.bindServices(boot.services, { maxConcurrent: 1 })
   // V2 O5: 启动 cron ticker（每 60s 扫描 cron 模板）— 单用户场景独占进程即可
   scheduler.startCronTicker(60_000)
+
+  // V2 O9 Process notify-on-exit: 后台命令 close → 写 message 到 thread + 自动 enqueue
+  // 让 LLM 不需要轮询 Process read 即可看到结果。
+  {
+    const { setProcessExitNotifier } = await import('@ai-emp/tools')
+    setProcessExitNotifier((evt) => {
+      const { repos } = boot.services
+      // 写一条 system text message，LLM 下轮 prompt 自然看到
+      try {
+        repos.messages.append({
+          threadId: evt.threadId,
+          role: 'system',
+          type: 'text',
+          content: {
+            type: 'text',
+            text: `⏱️ 后台进程 ${evt.sessionId.slice(0, 8)}… (${evt.command.slice(0, 80)}) 已结束 — 状态=${evt.status} exitCode=${evt.exitCode} 耗时=${Math.round(evt.durationMs / 1000)}s。用 Process tool read 该 sessionId 拿完整 stdout/stderr。`,
+          },
+        })
+      } catch (err) {
+        log.warn('processExitNotifier.append_fail', { sessionId: evt.sessionId, err: String(err) })
+      }
+      // 工单"进行中"才自动唤醒（防止 paused / awaiting_user 工单被强拉跑）
+      const req = repos.requirements.findById(evt.requirementId)
+      if (req && req.status === '进行中') {
+        scheduler.enqueue(evt.requirementId)
+      }
+    })
+  }
 
   const handle = createServer({
     port,

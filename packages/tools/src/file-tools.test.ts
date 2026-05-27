@@ -22,7 +22,9 @@ import {
   processTool,
   FILE_TOOL_NAMES,
   FILE_TOOLS,
+  setProcessExitNotifier,
   _resetSessionsForTest,
+  type ProcessExitEvent,
 } from './file-tools.js'
 import type { ToolContext } from './types.js'
 
@@ -253,5 +255,46 @@ describe('Bash background + Process', () => {
     expect(r1.status).toBe('completed')
     const r2 = await processTool.invoke({ sessionId: sid, action: 'read' }, makeCtx())
     expect(r2.status).toBe('unknown')
+  })
+
+  // ── V2 O9: notify-on-exit ───────────────────────────────────
+  test('V2 O9: background 进程 close → 触发 processExitNotifier 回调', async () => {
+    const events: ProcessExitEvent[] = []
+    setProcessExitNotifier((e) => events.push(e))
+    const startR = await bashTool.invoke(
+      { command: 'echo hi; sleep 0.2', background: true },
+      makeCtx(),
+    )
+    expect(startR.status).toBe('running')
+    const sid = startR.sessionId!
+    // 等进程退出
+    await new Promise((r) => setTimeout(r, 500))
+    expect(events.length).toBe(1)
+    expect(events[0]!.sessionId).toBe(sid)
+    expect(events[0]!.requirementId).toBe('test-req')
+    expect(events[0]!.threadId).toBe('test-thread')
+    expect(events[0]!.status).toBe('completed')
+    expect(events[0]!.exitCode).toBe(0)
+    expect(events[0]!.command).toContain('echo hi')
+  })
+
+  test('V2 O9: 前台同步路径不触发 notifier（因 sessions 已 delete）', async () => {
+    const events: ProcessExitEvent[] = []
+    setProcessExitNotifier((e) => events.push(e))
+    await bashTool.invoke({ command: 'echo sync', yield_ms: 5000 }, makeCtx())
+    // 前台同步等到 close 时 sessions.delete 已 run；notifier 检查 sessions.get(sid) 应已为 undefined
+    // notify 路径 guard: sessions.get(sessionId) === session 为 false → 不触发
+    expect(events.length).toBe(0)
+  })
+
+  test('V2 O9: notifier 抛错不影响主流程', async () => {
+    setProcessExitNotifier(() => {
+      throw new Error('boom')
+    })
+    const startR = await bashTool.invoke({ command: 'echo nothrow', background: true }, makeCtx())
+    await new Promise((r) => setTimeout(r, 300))
+    // 后台 session 还能正常 read（注意：close 时 sessions 还存在）
+    const rR = await processTool.invoke({ sessionId: startR.sessionId!, action: 'read' }, makeCtx())
+    expect(rR.status).toBe('completed')
   })
 })
