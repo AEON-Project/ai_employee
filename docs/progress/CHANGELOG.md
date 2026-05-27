@@ -36,3 +36,4 @@
 | `48631d4` | docs(claude): 回填 d644706 + 11a36ec 到"已交付"表 | — |
 | `964f6ac` | docs: 按文件夹分类整理文档 + 拆分 CLAUDE.md（新增 docs/{product,architecture,progress,ai}/） | 本文件 + [WORKFLOW](../ai/WORKFLOW.md) + [DEBUGGING](../ai/DEBUGGING.md) + [CONVENTIONS](../architecture/CONVENTIONS.md) |
 | `fb888a3` | feat(web): 补员工/项目/技能详情页 — 填齐 α 阶段 Web UI 占位（员工技能挂载多选+记忆 Tab / 项目规范+知识 CRUD / 技能编辑器）；后端补 PATCH/DELETE skills、PATCH employees、POST memory items | [PRD V1 §M1-M3](../product/PRD_V1.md#m2-员工能力载体) |
+| `0f93758` | fix(server): HTTP 派单后调 scheduler.enqueue — 修复 executeRequirement 永不触发（α 阶段 server 模式 P0 bug；e2e 测试一直绕过 server 直调 execute 所以未覆盖） | — |
