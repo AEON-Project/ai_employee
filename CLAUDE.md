@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`e05ea62` feat(runtime+tools): V2 O3 sub-agent 协作 — spawn_employee 系统 tool；父员工同步派子任务给另一员工，嵌套 execute 后 tool_result 回传；PRD「组织+岗位」心智第一次能跑起来
+> 最近：`ec9195e` feat(checkpoint): V2 O4 Checkpoint 回滚 — 工单 baseline 自动建快照（git + tar 双后端）+ checkpoint 系统 tool 主动建 + reject 时 UI 可选回滚；非 git 项目也安全
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
