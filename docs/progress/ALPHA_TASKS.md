@@ -282,4 +282,51 @@ T4.1 e2e #1~#6  ─▶  T4.2 bun compile  ─▶  T4.3 量化采样  ─▶  T4.
 
 ---
 
+## 14. V2 优化清单（OpenClaw 对比后整理 — 2026-05-27）
+
+**背景**：跟 [OpenClaw](https://github.com/openclaw/openclaw)（personal AI assistant，多频道聊天）对比后梳理出"明显缺陷 + 高价值优化"。详见 commit `ff02d3e` 之后的对话上下文。
+
+**已验证的护城河**：工单状态机 + 待验收 + Git Diff 验收 + advance_step.blocked / LLM retry 等引擎层防御 — OpenClaw 没有，是我们工程交付场景的核心优势，**不要动**。
+
+### 14.1 明显缺陷（按价值 ROI 排序）
+
+| ID | 缺陷 | 影响 | OpenClaw 怎么做的 | 修复成本 | 优先级 |
+|---|---|---|---|---|---|
+| D1 | **没有真 PTY** | mvn / vim / npm run dev / 任何 tty-required CLI 跑不动 | DSR + node-pty | 半天 | P1 |
+| D2 | **没有 sub-agent / 员工互调** | "小后写完代码召唤小测跑测试"做不到；违反 PRD"组织+岗位"心智 | ACP 协议 + spawnSubagent tool + SubagentRegistry | 1-2 天 | **P0** |
+| D3 | **prompt cache 利用率低** | composer 只设 1 个 cacheBreakpoint，token 消耗高 | pi-ai 上游库多级切点 | 半天 | P1 |
+| D4 | **后台进程无主动通知** | mvn compile 跑完 LLM 不知道，要主动 `Process read` 轮询 | notify-on-exit 事件 + 心跳唤醒 | 半天 | P2 |
+| D5 | **memory 闭环弱** | facts/pitfalls/lessons 表存在，但 LLM 没"被 reject 后自动写教训"的强约束（PRD §3 核心机制） | OpenClaw 也没（互补关系，但我们要补） | 1 天 | **P0** |
+| D6 | **无危险命令审批** | `sudo rm -rf /` 直接跑；单机可关闭，但默认应有警告 | exec-approvals socket | 中（UI 弹窗 + WS 双向） | P2 |
+| D7 | **无 exec host 抽象** | 全本地；OpenClaw 支持 docker sandbox / 远端 node | host: 'local' / 'docker' / 'remote' | 大 | P3 |
+
+### 14.2 高价值优化（按工程量/价值比）
+
+| 优先级 | ID | 项 | 工程量 | 用户体验提升 |
+|---|---|---|---|---|
+| 🥇 **P0** | O1 | **sub-agent 协作**（修复 D2）：新加 `spawn_employee` 系统 tool，让员工召唤另一个员工接子任务；子员工独立 sessionKey + 状态机，完成后回传 deliverable 给父员工。**真"组织"心智** | 1-2 天 | 跨员工分工，PRD 心智完整 |
+| 🥇 **P0** | O2 | **memory 闭环强化**（修复 D5）：加 `emit_lesson` 系统 tool —— 员工被 reject 时自动调用沉淀教训到 employee lessons；下次同类任务 composer 自动 RAG 注入 prompt 头部 | 1 天 | 真"会成长"的员工，PRD §3 核心机制闭环 |
+| 🥈 P1 | O3 | **真 PTY 支持**（修复 D1）：接 `node-pty`，Bash tool 加 `pty: true` 走 PTY 路径；fallback 失败时 child_process.spawn | 半天 | mvn / vim 等能跑 |
+| 🥈 P1 | O4 | **prompt cache 精细化**（修复 D3）：把 system block 切成 `[平台层 / 项目层 / 需求层]` 三段独立 breakpoint，命中率从 1 段提到 3 段 | 半天 | 省 token 钱 + 首 chunk 加速 |
+| 🥉 P2 | O5 | **Process notify-on-exit**（修复 D4）：后台命令 close 时 bus.emit 一个 message，runtime 收到后唤醒 LLM 接着干（不再轮询） | 半天 | mvn 长命令体验顺滑 |
+| 🥉 P2 | O6 | **危险命令审批**（修复 D6）：黑名单（rm -rf / / sudo / curl pipe sh / dd 等）触发"待用户确认"半状态；WS 推到 UI 弹窗 + 用户 approve/deny；可在 employee 配置全开放跳过 | 1-2 天 | 安全感 + 防误操作 |
+
+### 14.3 不做（明确边界）
+
+- ❌ **去掉工单状态机改成纯聊天** — 这是我们的护城河，不去掉
+- ❌ **抄 pi-agent-core 替换 runtime.execute** — 我们自造 runtime 已经织入工单状态机 + V1.2/V1.4 防御，OpenClaw 黑盒库套不进来
+- ❌ **接入 20+ IM 频道** — 当前 web + telegram 够用，不为多渠道而多渠道
+- ❌ **LanceDB 替换 sqlite-vec** — 单用户场景 sqlite-vec 够用，迁移成本高
+
+### 14.4 推进建议（按"补足 PRD 核心机制 + 能跑通真实工程任务"排）
+
+1. **O2（memory 闭环）** — PRD §3 三大核心机制之一（"纠错沉淀"），目前只完成了 1/3
+2. **O1（sub-agent）** — PRD 心智完整性（"组织 + 岗位"），目前一个工单只能挂一个员工
+3. **O3（PTY）** — 实战能跑 mvn / gradle，工程交付场景刚需
+4. **O4（prompt cache）** — 成本优化，可与 O2/O1 并行
+5. **O5（notify-on-exit）** — O3 之后做
+6. **O6（危险命令审批）** — 可选，单用户单机默认可不开
+
+---
+
 > 任务卡推进过程中如发现新依赖或拆分需求，更新本文件而非另开新文档。
