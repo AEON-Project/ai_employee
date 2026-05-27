@@ -41,7 +41,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`eb5bd5e` fix(prompt+runtime): composer 注入 currentStep + historySummary + advance_step step 单调（E2E 闭环：5 步 plan 全 done → 待验收）
+> 最近：`d9099e9` feat(tools): V1.1 file/shell tool 集（Read/Write/Edit/Glob/Grep/Bash 完整本地权限）+ E2E 真改外部项目代码
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
