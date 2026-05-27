@@ -64,7 +64,7 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
   const main = skills[0]?.skill
   const others = skills.slice(1).map((s) => s.skill)
 
-  // ① 硬约束部分
+  // ① 平台层（跟员工走，跨项目稳定）— persona / style / skill
   const parts: string[] = []
   parts.push('# 你是一个 AI 员工', `## 角色\n${emp.role}`)
   if (emp.persona) parts.push(`## 人设\n${emp.persona}`)
@@ -78,7 +78,10 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
     )
   }
 
-  // ② 项目规范
+  // V2 O8 cache breakpoint #1: 平台层尾部 — 切换项目/需求时此段仍命中（最稳定）
+  const cacheBpPlatformBytes = computeJoinedBytes(parts)
+
+  // ② 项目层（跟项目走，跨需求稳定）— 项目规范
   let requiredCount = 0
   let recommendedCount = 0
   if (req.projectId) {
@@ -100,9 +103,8 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
     }
   }
 
-  // ⚓ cache breakpoint — 到此为止的内容稳定，可缓存
-  //   后续 RAG / plan / chat 都按需求变化，不能进 cache
-  const cacheBreakpointBytes = parts.reduce((sum, p) => sum + p.length, 0) + parts.length * 2 // 加上 \n\n 分隔
+  // V2 O8 cache breakpoint #2: 项目层尾部 — 同项目不同需求时此段仍命中
+  const cacheBpProjectBytes = computeJoinedBytes(parts)
 
   // ③ RAG：facts / pitfalls / lessons / skills
   let facts: RecallHit[] = []
@@ -167,6 +169,10 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
       ].join('\n'),
     )
   }
+
+  // V2 O8 cache breakpoint #3: RAG 注入尾部 — 同需求多轮 LLM 调用时此段命中
+  // （plan / currentStep / historySummary / chat history 每轮都变，不在 cache 内）
+  const cacheBpRequirementBytes = computeJoinedBytes(parts)
 
   // ④ Plan / 当前步骤
   if (req.planJson) {
@@ -288,8 +294,15 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
     messages,
     tokensEstimate:
       Math.round(system.length / 2) + messages.reduce((a, m) => a + m.content.length / 2, 0),
-    cacheBreakpoints:
-      cacheBreakpointBytes > 0 ? [Math.min(cacheBreakpointBytes, system.length)] : [],
+    // V2 O8: 三段独立 cache breakpoint（平台 / 项目 / 需求），让缓存命中粒度更细：
+    //   - 切换需求 → bp1+bp2 命中（平台 + 项目）
+    //   - 切换项目 → bp1 命中（平台）
+    //   - 同需求多轮 → bp1+bp2+bp3 都命中
+    // 去重（防 0 长度 / 大于 system.length 的非法位置），保持递增
+    cacheBreakpoints: dedupeMonotonicBreakpoints(
+      [cacheBpPlatformBytes, cacheBpProjectBytes, cacheBpRequirementBytes],
+      system.length,
+    ),
     debug: {
       recalledFacts: facts,
       recalledPitfalls: pitfalls,
@@ -299,6 +312,29 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
       recommendedConventionCount: recommendedCount,
     },
   }
+}
+
+/** parts.join('\n\n').length —— 复用 join 同款分隔符 */
+function computeJoinedBytes(parts: string[]): number {
+  if (parts.length === 0) return 0
+  return parts.join('\n\n').length
+}
+
+/**
+ * 去重 + 单调递增 + 上界裁剪。
+ * Anthropic 最多 4 个 cache_control 标记，我们最多输出 3 个，安全余量。
+ */
+function dedupeMonotonicBreakpoints(raw: number[], systemLen: number): number[] {
+  const out: number[] = []
+  let lastBp = 0
+  for (const bp of raw) {
+    const clamped = Math.min(bp, systemLen)
+    if (clamped > lastBp && clamped > 0) {
+      out.push(clamped)
+      lastBp = clamped
+    }
+  }
+  return out
 }
 
 function extractText(c: unknown): string | null {

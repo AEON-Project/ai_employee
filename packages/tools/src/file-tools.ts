@@ -199,7 +199,7 @@ export const bashTool: ToolDef<BashArgs, BashResult> = {
       spawnCmd = 'zsh'
       spawnArgs = ['-lc', args.command]
     }
-    const child = spawn(spawnCmd, spawnArgs, spawnOpts)
+    const child = spawn(spawnCmd, spawnArgs, spawnOpts) as ChildProcessWithoutNullStreams
     const session: ProcessSession = {
       id: sessionId,
       command: args.command,

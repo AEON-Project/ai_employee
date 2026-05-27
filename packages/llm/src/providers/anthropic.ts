@@ -184,8 +184,11 @@ function buildBody(
 }
 
 /**
- * 把 system prompt 按 cacheBreakpoints 切成多段；前缀段标记 cache_control: ephemeral。
- * 没有断点 → 直接传字符串（最常见，Anthropic SDK 都接受）。
+ * 把 system prompt 按 cacheBreakpoints 切成多段；每段尾打 cache_control: ephemeral。
+ * V2 O8: 支持多 breakpoint（最多 4 个 ephemeral 标记，Anthropic 规范上限）；
+ *   三段 bp [p, q, r] → 4 个 text block：[0..p]+ephemeral, [p..q]+ephemeral,
+ *   [q..r]+ephemeral, [r..end]（最后一段不标，因每轮变化）。
+ * 没有有效断点 → 直接传字符串。
  */
 function buildSystemBlocks(
   system: string,
@@ -193,16 +196,32 @@ function buildSystemBlocks(
 ): string | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[] {
   if (!breakpoints || breakpoints.length === 0) return system
 
-  // 仅取第一个有效断点；超过 system.length 则忽略
-  const bp = breakpoints[0]!
-  if (bp <= 0 || bp >= system.length) return system
+  // 清洗：单调递增 + 严格 [1..system.length-1]；最多 4 个 ephemeral 标记
+  const cleaned: number[] = []
+  let last = 0
+  for (const bp of breakpoints) {
+    if (bp > last && bp < system.length && cleaned.length < 4) {
+      cleaned.push(bp)
+      last = bp
+    }
+  }
+  if (cleaned.length === 0) return system
 
-  const head = system.slice(0, bp)
-  const tail = system.slice(bp)
-  return [
-    { type: 'text', text: head, cache_control: { type: 'ephemeral' } },
-    { type: 'text', text: tail },
-  ]
+  const blocks: { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[] = []
+  let prev = 0
+  for (const bp of cleaned) {
+    blocks.push({
+      type: 'text',
+      text: system.slice(prev, bp),
+      cache_control: { type: 'ephemeral' },
+    })
+    prev = bp
+  }
+  // 尾段（每轮变化的内容，不标 cache_control）
+  if (prev < system.length) {
+    blocks.push({ type: 'text', text: system.slice(prev) })
+  }
+  return blocks
 }
 
 function toAnthropicTool(t: LLMToolSchema) {
