@@ -38,3 +38,4 @@
 | `fb888a3` | feat(web): 补员工/项目/技能详情页 — 填齐 α 阶段 Web UI 占位（员工技能挂载多选+记忆 Tab / 项目规范+知识 CRUD / 技能编辑器）；后端补 PATCH/DELETE skills、PATCH employees、POST memory items | [PRD V1 §M1-M3](../product/PRD_V1.md#m2-员工能力载体) |
 | `0f93758` | fix(server): HTTP 派单后调 scheduler.enqueue — 修复 executeRequirement 永不触发（α 阶段 server 模式 P0 bug；e2e 测试一直绕过 server 直调 execute 所以未覆盖） | — |
 | `9992f8c` | feat(web): 补「需求」总列表页 + 项目详情页「需求」Tab（顶栏 #/requirements 表格视图+9 状态筛选；后端 GET /requirements 支持 status/projectId/all 组合查询） | [PRD V1 §M4](../product/PRD_V1.md#m4-需求任务入口) |
+| `0a00156` | fix(ux): LLM 错误/system_pause 在 UI 思维链可见 + Controls 加 busy/err 显示（"点击继续无响应"根因：systemPause 没 append error message + Controls 吞错误） | — |
