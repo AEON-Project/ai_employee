@@ -12,6 +12,7 @@ import {
   type RequirementId,
 } from '@ai-emp/domain'
 import { transition } from './state-machine.js'
+import { reindexSource } from '../memory/memory.js'
 import type { RuntimeServices } from './services.js'
 
 export interface AnswerEntry {
@@ -93,14 +94,70 @@ export function approveRequirement(services: RuntimeServices, reqId: Requirement
   bus.emit('requirement.state_changed', { reqId, from: t.from, to: t.to, reason: t.reason })
 }
 
-/** 用户驳回 → 已驳回 */
-export function rejectRequirement(services: RuntimeServices, reqId: RequirementId): void {
+/**
+ * 用户驳回 → 已驳回。
+ *
+ * V2 O2 memory 闭环（PRD §3「纠错沉淀」）：
+ *   - reason 非空时把用户驳回原因自动写入 employee.lesson（最小开销，不调 LLM 复盘）
+ *   - 下次同员工接到相似需求时，composer 通过 lessons RAG 自动注入到 system prompt
+ *   - reason 也作为一条 system message 落入 thread，方便 UI 思维链可见
+ */
+export async function rejectRequirement(
+  services: RuntimeServices,
+  reqId: RequirementId,
+  opts?: { reason?: string },
+): Promise<void> {
   const { repos, bus } = services
   const req = repos.requirements.findById(reqId)
   if (!req) throw new Error(`requirement not found: ${reqId}`)
+  const reason = opts?.reason?.trim() ?? ''
   const t = transition(req.status, { kind: 'reject' })
   repos.requirements.setStatus(reqId, t.to, { completedAt: new Date() })
   bus.emit('requirement.state_changed', { reqId, from: t.from, to: t.to, reason: t.reason })
+
+  // 自动沉淀：把驳回原因写进 employee.lesson（V2 O2 PRD §3 核心机制最后一环）
+  if (reason && req.assigneeId) {
+    const thread = repos.threads.findByRequirement(reqId)
+    if (thread) {
+      repos.messages.append({
+        threadId: thread.id,
+        role: 'system',
+        type: 'text',
+        content: { type: 'text', text: `🚫 用户驳回。原因：${reason}` },
+      })
+    }
+    const lessonContent = `用户驳回时反馈：${reason}（来自工单"${req.title}"）`
+    const lessonId = repos.memoryItems.create({
+      scope: 'employee',
+      scopeId: req.assigneeId,
+      kind: 'lesson',
+      content: lessonContent,
+      sourceRequirementId: reqId,
+    })
+    if (services.memory) {
+      try {
+        await reindexSource(
+          { repos, sqlite: services.memory.sqlite, embed: services.memory.embed },
+          'memory_item',
+          lessonId,
+          lessonContent,
+        )
+      } catch {
+        // reindex 失败不阻断 reject 主流程；lesson 仍写入了表，只是 RAG 命中率低
+      }
+    }
+    bus.emit('memory.persisted', {
+      items: [
+        {
+          id: lessonId,
+          scope: 'employee',
+          scopeId: req.assigneeId,
+          kind: 'lesson',
+          content: lessonContent,
+        },
+      ],
+    })
+  }
 }
 
 /**

@@ -297,8 +297,10 @@ export function mountApi(app: Hono, deps: ServerDeps) {
     approveRequirement(services, c.req.param('id'))
     return c.json({ ok: true })
   })
-  api.post('/requirements/:id/reject', (c) => {
-    rejectRequirement(services, c.req.param('id'))
+  api.post('/requirements/:id/reject', async (c) => {
+    const body = await c.req.json().catch(() => ({}))
+    const reason = typeof body?.reason === 'string' ? body.reason : undefined
+    await rejectRequirement(services, c.req.param('id'), { reason })
     return c.json({ ok: true })
   })
   api.post('/requirements/:id/force-end', async (c) => {

@@ -664,6 +664,120 @@ async function dispatch(
       })
       return { kind: 'delivered' }
     }
+    case 'emit_lesson': {
+      // V2 O2 memory 闭环强化（PRD §3「纠错沉淀」核心机制）。
+      // LLM 主动沉淀教训：写 memory_items(kind='lesson', scope=employee|project)，走 RAG 索引。
+      // 与 reject 路径协作 —— LLM 主动 + 用户被动两条沉淀路径都最终走到这里的 schema。
+      const argsL = call.args as { content?: string; scope?: string; context?: string }
+      const lessonContent = typeof argsL.content === 'string' ? argsL.content.trim() : ''
+      const lessonScope = argsL.scope === 'project' || argsL.scope === 'employee' ? argsL.scope : ''
+      const lessonContext = typeof argsL.context === 'string' ? argsL.context.trim() : ''
+      if (!lessonContent || !lessonScope) {
+        log.warn('emit_lesson.invalid', {
+          reqId,
+          hasContent: !!lessonContent,
+          hasScope: !!lessonScope,
+        })
+        repos.messages.append({
+          threadId: thread.id,
+          role: 'system',
+          type: 'error',
+          content: {
+            type: 'error',
+            message: `emit_lesson 已忽略：缺少必要字段（content / scope 均非空）。`,
+            fatal: false,
+          },
+        })
+        return {
+          kind: 'continue',
+          newState: {
+            currentStep: ctx.currentStep,
+            historySummary: ctx.historySummary,
+            budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+          },
+        }
+      }
+      // scope=project 需要 req.projectId
+      const reqRowL = repos.requirements.findById(reqId)
+      let lessonScopeId: string
+      if (lessonScope === 'project') {
+        if (!reqRowL?.projectId) {
+          log.warn('emit_lesson.no_project', { reqId })
+          repos.messages.append({
+            threadId: thread.id,
+            role: 'system',
+            type: 'error',
+            content: {
+              type: 'error',
+              message: `emit_lesson 已忽略：scope='project' 但当前需求未挂项目，请改用 scope='employee'。`,
+              fatal: false,
+            },
+          })
+          return {
+            kind: 'continue',
+            newState: {
+              currentStep: ctx.currentStep,
+              historySummary: ctx.historySummary,
+              budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+            },
+          }
+        }
+        lessonScopeId = reqRowL.projectId
+      } else {
+        lessonScopeId = employee.id
+      }
+      // 拼装 content（context 作为前缀，方便 embedding 命中）
+      const fullContent = lessonContext
+        ? `${lessonContent}\n（场景：${lessonContext}）`
+        : lessonContent
+      const lessonId = repos.memoryItems.create({
+        scope: lessonScope,
+        scopeId: lessonScopeId,
+        kind: 'lesson',
+        content: fullContent,
+        sourceRequirementId: reqId,
+      })
+      if (services.memory) {
+        try {
+          await reindexSource(
+            { repos, sqlite: services.memory.sqlite, embed: services.memory.embed },
+            'memory_item',
+            lessonId,
+            fullContent,
+          )
+        } catch (err) {
+          log.warn('emit_lesson.reindex_failed', { reqId, lessonId, err: String(err) })
+        }
+      }
+      repos.messages.append({
+        threadId: thread.id,
+        role: 'assistant',
+        type: 'text',
+        content: {
+          type: 'text',
+          text: `📝 已沉淀 lesson（scope=${lessonScope}）：${lessonContent.slice(0, 80)}${lessonContent.length > 80 ? '…' : ''}`,
+        },
+      })
+      bus.emit('memory.persisted', {
+        items: [
+          {
+            id: lessonId,
+            scope: lessonScope,
+            scopeId: lessonScopeId,
+            kind: 'lesson',
+            content: fullContent,
+          },
+        ],
+      })
+      return {
+        kind: 'continue',
+        newState: {
+          currentStep: ctx.currentStep,
+          historySummary: ctx.historySummary,
+          budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+        },
+      }
+    }
     case 'emit_skill': {
       // V2 O1 Skills 自演化：把 LLM 总结的"可复用做法套路"沉淀进 memory_items(kind='skill', scope='employee')。
       // 走 RAG 索引；下次同员工接到相似需求时 composer 自动注入到 system prompt。

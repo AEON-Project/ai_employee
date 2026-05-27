@@ -286,7 +286,7 @@ async function handleIntent(
       const m = matchReqIdPrefix(intent.reqIdPrefix, all)
       if ('error' in m) return void (await ctx.reply(m.error))
       if (intent.kind === 'approve') approveRequirement(deps.services, m.reqId)
-      else rejectRequirement(deps.services, m.reqId)
+      else await rejectRequirement(deps.services, m.reqId)
       await ctx.reply(
         `${intent.kind === 'approve' ? '✓ 已验收' : '✗ 已驳回'} ${m.reqId.slice(0, 8)}`,
       )

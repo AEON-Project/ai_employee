@@ -261,6 +261,69 @@ export const emitSkillTool: ToolDef<EmitSkillArgs, never> = {
   },
 }
 
+// ── emit_lesson ─────────────────────────────────────────────
+//
+// V2 O2 memory 闭环强化（PRD §3「纠错沉淀」核心机制）。
+// LLM 在察觉到错误 / 反复失败 / 即将被反馈不满意时主动调用沉淀教训；
+// runtime 写入 memory_items(kind='lesson') + 走 RAG 索引；
+// 下次同员工或同项目接到相似需求时，composer 按相似度 Top-K 自动注入到 system prompt。
+//
+// 与 emit_skill 的差异：
+//   - skill 是「成功套路」（积极经验），lesson 是「失败教训」（消极经验）
+//   - skill 默认 scope=employee；lesson 可选 employee（个人教训）或 project（项目踩坑）
+//   - skill 在交付完成后调；lesson 在任何时刻察觉错误时即可调
+export const EmitLessonArgsZ = z.object({
+  content: z.string().min(1).max(500),
+  scope: z.enum(['employee', 'project']),
+  /** 可选：1-2 句话说明触发场景，帮 RAG 检索命中率高 */
+  context: z.string().optional(),
+})
+export type EmitLessonArgs = z.infer<typeof EmitLessonArgsZ>
+
+export const emitLessonTool: ToolDef<EmitLessonArgs, never> = {
+  name: 'emit_lesson',
+  kind: 'system',
+  description: [
+    '沉淀一条教训到长期记忆，下次同类任务时引擎会自动注入。PRD §3「纠错沉淀」核心机制。',
+    '何时调用：',
+    '  - 察觉自己犯了可避免的错误（路径搞错 / 工具选错 / 漏掉前置检查）',
+    '  - 反复 3 次以上某种失败模式（如"先 sed 后 find"导致 ENOENT）',
+    '  - 用户在澄清里指出你之前的做法不对',
+    '  - 即将 emit_deliverable，但回顾过程觉得"这次走了弯路，记下来下次不要犯"',
+    'scope 选择：',
+    '  - employee：个人教训（如"我容易先动手后探索"）',
+    '  - project：项目踩坑（如"本项目的 maven 必须先 ./mvnw 而不是全局 mvn"）',
+    '如果你对当前任务进行很顺利，不要 emit_lesson；引擎不强制。',
+  ].join('\n'),
+  inputSchema: EmitLessonArgsZ,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      content: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 500,
+        description: '教训正文，一句话总结"下次别再这样"或"下次该这样"',
+      },
+      scope: {
+        type: 'string',
+        enum: ['employee', 'project'],
+        description:
+          'employee = 个人教训（跟员工走） / project = 项目踩坑（跟项目走，需求必须挂在某项目）',
+      },
+      context: {
+        type: 'string',
+        description: '可选：1-2 句话补充触发场景，帮未来 RAG 检索命中',
+      },
+    },
+    required: ['content', 'scope'],
+    additionalProperties: false,
+  },
+  invoke: async () => {
+    throw new Error('emit_lesson must be dispatched by runtime')
+  },
+}
+
 /**
  * 全部系统级 tool 列表，registry 启动时一次注册。
  * 用 `ToolDef[]` 类型存储时各项 I/O 泛型实例化为 unknown — 数组元素只读，安全。
@@ -271,6 +334,7 @@ export const SYSTEM_TOOLS: ToolDef[] = [
   updatePlanTool as ToolDef,
   emitDeliverableTool as ToolDef,
   emitSkillTool as ToolDef,
+  emitLessonTool as ToolDef,
 ]
 
 export const SYSTEM_TOOL_NAMES = new Set(SYSTEM_TOOLS.map((t) => t.name))

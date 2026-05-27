@@ -275,18 +275,30 @@ function Controls({ req, onChanged }: { req: Requirement; onChanged: () => void 
 }
 
 function ApprovePanel({ reqId, onChanged }: { reqId: string; onChanged: () => void }) {
-  async function call(action: 'approve' | 'reject') {
-    await api.post(`/api/requirements/${reqId}/${action}`)
+  async function approve() {
+    await api.post(`/api/requirements/${reqId}/approve`)
+    onChanged()
+  }
+  async function reject() {
+    // V2 O2 memory 闭环：让用户给个原因，引擎自动写入 employee.lesson 下次注入到同员工的 prompt
+    const reason = window.prompt(
+      '请输入驳回原因（留空也可，但带原因会让该员工下次同类任务避免重蹈覆辙）：',
+      '',
+    )
+    if (reason === null) return // 取消
+    await api.post(`/api/requirements/${reqId}/reject`, {
+      reason: reason.trim() || undefined,
+    })
     onChanged()
   }
   return (
     <div className="card flex items-center justify-between bg-purple-50 border-purple-200">
       <span className="text-sm">交付物已准备就绪，请确认</span>
       <div className="flex gap-2">
-        <button className="btn-primary" onClick={() => call('approve')}>
+        <button className="btn-primary" onClick={approve}>
           验收 ✓
         </button>
-        <button className="btn-danger" onClick={() => call('reject')}>
+        <button className="btn-danger" onClick={reject}>
           驳回 ✗
         </button>
       </div>

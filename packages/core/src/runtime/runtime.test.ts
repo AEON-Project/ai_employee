@@ -25,6 +25,7 @@ import {
   assignRequirement,
   draftClarification,
   executeRequirement,
+  rejectRequirement,
   resumeRequirement,
   scanInflight,
   type LLMFactory,
@@ -46,6 +47,7 @@ const mockTools: RuntimeToolDef[] = [
   { name: 'update_plan', kind: 'system', description: '', inputSchema: passThroughSchema },
   { name: 'emit_deliverable', kind: 'system', description: '', inputSchema: passThroughSchema },
   { name: 'emit_skill', kind: 'system', description: '', inputSchema: passThroughSchema },
+  { name: 'emit_lesson', kind: 'system', description: '', inputSchema: passThroughSchema },
 ]
 const toolJsonSchema = (_name: string) => ({}) // 形状对 mock 测试不重要
 const mockRegistry = {
@@ -663,6 +665,188 @@ describe('executeRequirement', () => {
         ((m.contentJson as { message?: string }).message ?? '').includes('emit_skill 已忽略'),
     )
     expect(errMsg).toBeDefined()
+  })
+
+  test('V2 O2: emit_lesson 写入 memory_items(kind=lesson, scope=employee)', async () => {
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_lesson',
+          args: {
+            content: '先 sed 改文件再 find 验证 → 多次 ENOENT；应先 find 确认路径再改',
+            scope: 'employee',
+            context: '修改 Java 项目时反复路径错',
+          },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'emit_deliverable',
+          args: { summary: '收尾', contentText: '...' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    const r = await executeRequirement(reqId, services)
+    expect(r.exit).toBe('delivered')
+
+    const lessons = repos.memoryItems.list({ scope: 'employee', scopeId: empId, kind: 'lesson' })
+    expect(lessons.length).toBe(1)
+    expect(lessons[0]!.content).toContain('先 sed 改文件再 find 验证')
+    expect(lessons[0]!.content).toContain('（场景：修改 Java 项目时反复路径错）')
+    expect(lessons[0]!.sourceRequirementId).toBe(reqId)
+
+    // 思维链可见
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    const sediment = msgs.find((m) => {
+      const text = (m.contentJson as { text?: string }).text ?? ''
+      return text.includes('已沉淀 lesson') && text.includes('scope=employee')
+    })
+    expect(sediment).toBeDefined()
+  })
+
+  test('V2 O2: emit_lesson scope=project 写入 project memory（带 projectId 时）', async () => {
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_lesson',
+          args: {
+            content: '本项目的 maven 必须先 ./mvnw 而不是全局 mvn',
+            scope: 'project',
+          },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'emit_deliverable',
+          args: { summary: 'done', contentText: '...' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+    const req = repos.requirements.findById(reqId)!
+    const projLessons = repos.memoryItems.list({
+      scope: 'project',
+      scopeId: req.projectId!,
+      kind: 'lesson',
+    })
+    expect(projLessons.length).toBe(1)
+    expect(projLessons[0]!.content).toContain('mvnw')
+    // employee scope 应该没有
+    const empLessons = repos.memoryItems.list({
+      scope: 'employee',
+      scopeId: empId,
+      kind: 'lesson',
+    })
+    expect(empLessons.length).toBe(0)
+  })
+
+  test('V2 O2: emit_lesson 缺字段 → system/error，不写入', async () => {
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_lesson',
+          args: { content: '某教训' /* scope 缺 */ },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'emit_deliverable',
+          args: { summary: 'done', contentText: '...' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+    const lessons = repos.memoryItems.list({ scope: 'employee', scopeId: empId, kind: 'lesson' })
+    expect(lessons.length).toBe(0)
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    const errMsg = msgs.find(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes('emit_lesson 已忽略'),
+    )
+    expect(errMsg).toBeDefined()
+  })
+
+  test('V2 O2: rejectRequirement(reason) 自动写 employee.lesson + thread 留痕', async () => {
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_deliverable',
+          args: { summary: '完成', contentText: '...' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+    expect(repos.requirements.findById(reqId)!.status).toBe('待验收')
+
+    await rejectRequirement(services, reqId, {
+      reason: '交付物没有实际修改任何代码，谎报完成；下次先 git status 看看真的有 diff 再交付',
+    })
+    expect(repos.requirements.findById(reqId)!.status).toBe('已驳回')
+
+    // 自动沉淀了一条 lesson
+    const lessons = repos.memoryItems.list({ scope: 'employee', scopeId: empId, kind: 'lesson' })
+    expect(lessons.length).toBe(1)
+    expect(lessons[0]!.content).toContain('谎报完成')
+    expect(lessons[0]!.content).toContain('来自工单"')
+    expect(lessons[0]!.sourceRequirementId).toBe(reqId)
+
+    // thread 留痕
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    const rejectMsg = msgs.find((m) => {
+      const text = (m.contentJson as { text?: string }).text ?? ''
+      return text.includes('用户驳回') && text.includes('谎报完成')
+    })
+    expect(rejectMsg).toBeDefined()
+  })
+
+  test('V2 O2: rejectRequirement 无 reason → 不写 lesson，只走状态转移', async () => {
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_deliverable',
+          args: { summary: '完成', contentText: '...' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+    await rejectRequirement(services, reqId)
+    expect(repos.requirements.findById(reqId)!.status).toBe('已驳回')
+    const lessons = repos.memoryItems.list({ scope: 'employee', scopeId: empId, kind: 'lesson' })
+    expect(lessons.length).toBe(0)
   })
 
   test('V1.4: LLM 429 错误自动退避重试，不立即 system_pause', async () => {
