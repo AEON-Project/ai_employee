@@ -94,29 +94,25 @@ export async function cmdServe(args: { port?: number }): Promise<number> {
     console.log(`恢复 ${recover.inflight.length} 个 in-flight 需求`)
   }
 
-  // ── 可选启动 TG bridge（需 keychain 中有 tg-bot-token） ──────
+  // ── 可选启动 TG bridge ──────────────────────────────────────
+  //   bot token 走 keychain（key 名由 cfg.telegram.botTokenRef 指定）
+  //   白名单 chat ids 从 cfg.telegram.allowedChatIds 读（来源：.env 或 config.toml）
   let bridge: BridgeHandle | null = null
-  const tgToken = await k.get('tg-bot-token').catch(() => null)
-  const tgChatRaw = process.env.AIEMP_TG_CHAT_IDS
-  if (tgToken && tgChatRaw) {
-    const ids = tgChatRaw
-      .split(',')
-      .map((s) => Number(s.trim()))
-      .filter((n) => Number.isFinite(n))
-    if (ids.length > 0) {
-      bridge = createBridge(
-        { services: boot.services, bus: boot.bus, repos: boot.services.repos },
-        {
-          token: tgToken,
-          allowedChatIds: ids,
-          webUrlBase: `http://localhost:${actualPort}`,
-        },
-      )
-      await bridge.start()
-      console.log(`✓ TG bridge 已启动，白名单 chat: ${ids.join(', ')}`)
-    }
+  const tgToken = await k.get(cfg.telegram.botTokenRef).catch(() => null)
+  const tgIds = cfg.telegram.allowedChatIds
+  if (tgToken && tgIds.length > 0) {
+    bridge = createBridge(
+      { services: boot.services, bus: boot.bus, repos: boot.services.repos },
+      {
+        token: tgToken,
+        allowedChatIds: tgIds,
+        webUrlBase: `http://localhost:${actualPort}`,
+      },
+    )
+    await bridge.start()
+    console.log(`✓ TG bridge 已启动，白名单 chat: ${tgIds.join(', ')}`)
   } else {
-    console.log(`  TG bridge 未启动（缺 tg-bot-token 或 AIEMP_TG_CHAT_IDS）`)
+    console.log(`  TG bridge 未启动（缺 ${cfg.telegram.botTokenRef} 或 allowedChatIds 为空）`)
   }
 
   console.log(`✓ ai-emp serve 启动：http://localhost:${actualPort}`)

@@ -27,12 +27,30 @@ cd packages/web && bun run build && cd ../..
 
 ## 3. 首次配置
 
+### 3.1 可选：用 `.env` 自定义
+
+复制 `.env.example` 为 `.env` 调端口、数据目录、Telegram 白名单等：
+
+```bash
+cp .env.example .env
+# 编辑 .env：
+#   AIEMP_PORT=7878
+#   AIEMP_DATA_DIR=./.ai-emp-data    # 开发期可指向项目内
+#   AIEMP_TG_CHAT_IDS=12345678,...
+```
+
+配置优先级：**.env > `~/.ai-emp/config.toml` > 内置默认**。Bun 启动时自动加载 `.env`，无需 dotenv 库。
+
+> 凭证（LLM key / TG bot token）**不**写 .env，一律走 keychain，详见 §4。
+
+### 3.2 init
+
 ```bash
 bun packages/cli/src/index.ts init
 ```
 
 会做三件事：
-1. 创建 `~/.ai-emp/`（DB / config.toml / models / attachments / logs / backups）
+1. 创建数据目录（默认 `~/.ai-emp/`；若 `.env` 设了 `AIEMP_DATA_DIR` 则用之）
 2. 生成 `localhost token` 写入系统 keychain（macOS Keychain / Linux libsecret）
 3. 打印浏览器登录链接
 
@@ -137,7 +155,8 @@ ai-emp models pull             手动下载嵌入模型
 | 路径 | 用途 |
 |---|---|
 | `~/.ai-emp/db.sqlite` | 所有数据（WAL 模式） |
-| `~/.ai-emp/config.toml` | 端口、token 引用、默认 budget |
+| `~/.ai-emp/config.toml` | 端口、token 引用、Telegram 配置、默认 budget |
+| 项目根 `.env` | 开发期 / 容器化覆盖配置（最高优先级） |
 | `~/.ai-emp/models/` | bge-small-zh-v1.5 嵌入模型权重 |
 | `~/.ai-emp/attachments/<req-id>/` | 需求附件与交付物 |
 | `~/.ai-emp/logs/YYYY-MM-DD.log` | 服务日志 |

@@ -63,11 +63,16 @@ bun packages/cli/src/index.ts serve
 
 ### 2. Telegram bot（手机端遥控）
 
-把 bot token 写入 keychain + 配置白名单 chat id，serve 时自动启动 bridge：
+把 bot token 写入 keychain + 配置白名单 chat id（写 `.env` 或 `~/.ai-emp/config.toml`），serve 时自动启动 bridge：
 
 ```bash
+# 凭证走 keychain
 ai-emp keychain set tg-bot-token <bot-token>
-AIEMP_TG_CHAT_IDS=12345678 ai-emp serve
+
+# 白名单在 .env（或 config.toml）：
+echo "AIEMP_TG_CHAT_IDS=12345678" >> .env
+
+ai-emp serve
 ```
 
 支持的命令：

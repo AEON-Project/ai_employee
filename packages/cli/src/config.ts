@@ -1,17 +1,18 @@
 /**
- * ~/.ai-emp/config.toml 加载与写入。
+ * ai-emp 配置加载。
  *
- * 简化 TOML 解析 / 序列化（仅支持我们用到的子集）：
- *   [section]
- *   key = "value"
- *   key = 1234
- *   key = [1, 2, 3]
- *   key = true
+ * 配置来源优先级（高 → 低）：
+ *   1. 环境变量（含 .env / .env.local；Bun 自动加载）
+ *   2. ~/.ai-emp/config.toml（init 时落盘）
+ *   3. 内置 DEFAULT_CONFIG
+ *
+ * 数据目录路径由 env `AIEMP_DATA_DIR` 覆盖，默认 `~/.ai-emp/`。
+ * 全套支持的 env 见 `.env.example`。
  */
 
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 
 export interface AiempConfig {
@@ -22,6 +23,12 @@ export interface AiempConfig {
   embedding: {
     model: string
     dim: number
+  }
+  telegram: {
+    /** keychain 中存 bot token 的 key 名 */
+    botTokenRef: string
+    /** 白名单 chat id 数组 */
+    allowedChatIds: number[]
   }
   defaults: {
     budget: {
@@ -41,6 +48,10 @@ const DEFAULT_CONFIG: AiempConfig = {
     model: 'bge-small-zh-v1.5',
     dim: 512,
   },
+  telegram: {
+    botTokenRef: 'tg-bot-token',
+    allowedChatIds: [],
+  },
   defaults: {
     budget: {
       maxIterations: 30,
@@ -50,7 +61,13 @@ const DEFAULT_CONFIG: AiempConfig = {
   },
 }
 
+// ──────────────────────────────────────────────────────────────
+// 目录与文件路径（dataDir 可由 env 覆盖；其余基于它派生）
+// ──────────────────────────────────────────────────────────────
+
 export function dataDir(): string {
+  const fromEnv = process.env.AIEMP_DATA_DIR
+  if (fromEnv && fromEnv.trim()) return resolve(fromEnv.trim())
   return join(homedir(), '.ai-emp')
 }
 
@@ -84,10 +101,24 @@ export async function ensureDirs(): Promise<void> {
   }
 }
 
+// ──────────────────────────────────────────────────────────────
+// 加载 / 保存
+// ──────────────────────────────────────────────────────────────
+
 export async function loadConfig(): Promise<AiempConfig> {
-  if (!existsSync(configPath())) return DEFAULT_CONFIG
-  const raw = await readFile(configPath(), 'utf8')
-  return parseToml(raw)
+  // 1) 从默认深拷一份
+  let cfg: AiempConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG))
+
+  // 2) 叠加 config.toml（如有）
+  if (existsSync(configPath())) {
+    const raw = await readFile(configPath(), 'utf8')
+    cfg = parseToml(raw)
+  }
+
+  // 3) env 覆盖（最高优先级；Bun 自动加载 .env / .env.local）
+  applyEnv(cfg)
+
+  return cfg
 }
 
 export async function saveConfig(cfg: AiempConfig): Promise<void> {
@@ -95,7 +126,63 @@ export async function saveConfig(cfg: AiempConfig): Promise<void> {
   await writeFile(configPath(), serializeToml(cfg), { mode: 0o600 })
 }
 
-// ── 极简 TOML（只覆盖我们写的格式） ───────────────────────────
+/**
+ * 从环境变量覆盖配置；支持以下 key（详见 .env.example）：
+ *
+ *   AIEMP_PORT
+ *   AIEMP_LOCALHOST_TOKEN_REF
+ *   AIEMP_EMBEDDING_MODEL
+ *   AIEMP_EMBEDDING_DIM
+ *   AIEMP_TG_BOT_TOKEN_REF
+ *   AIEMP_TG_CHAT_IDS                  (逗号分隔；如 "12345,67890")
+ *   AIEMP_BUDGET_MAX_ITERATIONS
+ *   AIEMP_BUDGET_MAX_TOKENS
+ *   AIEMP_BUDGET_MAX_WALL_TIME_MS
+ *
+ * 另外 AIEMP_DATA_DIR 不在 cfg 中，由 dataDir() 直接读。
+ */
+function applyEnv(cfg: AiempConfig): void {
+  const e = process.env
+  if (e.AIEMP_PORT) cfg.server.port = numOrThrow('AIEMP_PORT', e.AIEMP_PORT)
+  if (e.AIEMP_LOCALHOST_TOKEN_REF) cfg.server.localhostTokenRef = e.AIEMP_LOCALHOST_TOKEN_REF
+
+  if (e.AIEMP_EMBEDDING_MODEL) cfg.embedding.model = e.AIEMP_EMBEDDING_MODEL
+  if (e.AIEMP_EMBEDDING_DIM) cfg.embedding.dim = numOrThrow('AIEMP_EMBEDDING_DIM', e.AIEMP_EMBEDDING_DIM)
+
+  if (e.AIEMP_TG_BOT_TOKEN_REF) cfg.telegram.botTokenRef = e.AIEMP_TG_BOT_TOKEN_REF
+  if (e.AIEMP_TG_CHAT_IDS) {
+    cfg.telegram.allowedChatIds = e.AIEMP_TG_CHAT_IDS.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => numOrThrow('AIEMP_TG_CHAT_IDS', s))
+  }
+
+  if (e.AIEMP_BUDGET_MAX_ITERATIONS) {
+    cfg.defaults.budget.maxIterations = numOrThrow(
+      'AIEMP_BUDGET_MAX_ITERATIONS',
+      e.AIEMP_BUDGET_MAX_ITERATIONS,
+    )
+  }
+  if (e.AIEMP_BUDGET_MAX_TOKENS) {
+    cfg.defaults.budget.maxTokens = numOrThrow('AIEMP_BUDGET_MAX_TOKENS', e.AIEMP_BUDGET_MAX_TOKENS)
+  }
+  if (e.AIEMP_BUDGET_MAX_WALL_TIME_MS) {
+    cfg.defaults.budget.maxWallTimeMs = numOrThrow(
+      'AIEMP_BUDGET_MAX_WALL_TIME_MS',
+      e.AIEMP_BUDGET_MAX_WALL_TIME_MS,
+    )
+  }
+}
+
+function numOrThrow(name: string, raw: string): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n)) throw new Error(`env ${name} 不是合法数字: ${raw}`)
+  return n
+}
+
+// ──────────────────────────────────────────────────────────────
+// 极简 TOML（只覆盖我们写的格式）
+// ──────────────────────────────────────────────────────────────
 function parseToml(text: string): AiempConfig {
   const cfg: AiempConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG))
   let section: string[] = []
@@ -158,6 +245,7 @@ function serializeToml(cfg: AiempConfig): string {
   }
   emit('server', cfg.server as unknown as Record<string, unknown>)
   emit('embedding', cfg.embedding as unknown as Record<string, unknown>)
+  emit('telegram', cfg.telegram as unknown as Record<string, unknown>)
   emit('defaults', cfg.defaults as unknown as Record<string, unknown>)
   return lines.join('\n')
 }
