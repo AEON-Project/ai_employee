@@ -175,6 +175,34 @@ bun packages/cli/src/index.ts <cmd>      # 原始长形式
 ./dist/ai-emp <cmd>                      # 编译后二进制
 ```
 
+## 本地端到端调试（浏览器自动化）
+
+环境已配置 **`browser_navigate`** 等浏览器自动化 MCP 工具，AI 可直接打开 `http://localhost:7878` 验证真实渲染，不只是依赖单测和 curl。
+
+### 典型调试动作
+
+1. **启动 server**：`./ai-emp serve`（后台运行：`./ai-emp serve > /tmp/aiemp.log 2>&1 &`）
+2. **取 token**：`security find-generic-password -a localhost-token -s ai-emp -w`
+3. **登录跳转**：`browser_navigate("http://localhost:7878/auth?token=<TOKEN>&next=/")` —— 自动种 cookie 进首页
+4. 后续路由用 hash：`#/req/<id>` / `#/projects` / `#/employees` / `#/new`
+
+### 验收清单（每次改 UI / WS / API 前后必跑）
+
+| 场景 | 验证点 |
+|---|---|
+| 项目列表 / 员工列表 | navigate `#/projects` `#/employees`，截图看条目 + 状态徽章 |
+| 新建需求 | navigate `#/new`，填表单 → 跳详情页 |
+| 思维链流式 | navigate `#/req/<id>`，看 WebSocket 推送下 thinking/text 逐步 append |
+| 澄清卡片 | 派需求后看 amber 卡片渲染 + 答完澄清 → 状态变 "进行中" |
+| 控制按钮 | 暂停 / 继续 / 强制结束 / 验收 / 驳回 按钮各自触发 REST + 状态机转移 |
+| 验收面板 | 状态进 "待验收" 时 purple 面板出现 |
+
+### 提示
+
+- **改 UI 后必须 `bun run build` 重启 server**（dist 嵌入到 server 静态资源）；vite dev 模式与 server proxy 联调走 `bun run dev`（packages/web 内）
+- 浏览器自动化不替代 e2e 单测（`packages/server/src/e2e.test.ts`），后者跑得快、CI 友好；浏览器 navigate 是"我改的 UI 在真实浏览器里到底什么样"的最终视觉验证
+- 跑完调试**必须** `kill` 后台 server，避免端口占用：`ps aux | grep ai-emp` → `kill <PID>`
+
 ## Monorepo 结构
 
 11 个 workspace 包，依赖**单向洋葱**（箭头向下，不能反向）：
