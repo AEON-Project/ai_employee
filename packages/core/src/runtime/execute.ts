@@ -384,6 +384,42 @@ function handleChunk(
 }
 
 // ──────────────────────────────────────────────────────────────
+// V1.3 helpers — 检查 LLM 是否谎报"改了文件"
+// ──────────────────────────────────────────────────────────────
+
+/** 从 LLM 文本里提取"看起来像文件路径"的 token（带常见源代码后缀） */
+function extractClaimedFilePaths(text: string): string[] {
+  // 路径里允许字母/数字/. _ - / 组合；后缀白名单（避免抓 "1.0" / "v1.5" 之类）
+  const re =
+    /[A-Za-z0-9_\-./]+\.(java|kt|scala|ts|tsx|js|jsx|mjs|cjs|py|go|rs|rb|php|cs|swift|cpp|c|h|hpp|md|sql|json|yaml|yml|html|css|scss|less|xml|properties|toml|gradle|sh)\b/g
+  const matches = text.match(re) ?? []
+  // 去重 + 过滤明显非文件的 token（纯版本号等）
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const m of matches) {
+    const norm = m.trim()
+    // 至少包含一个 / 或 . 前面有字符（避免单纯 ".java" 被匹）
+    if (norm.length < 5) continue
+    if (seen.has(norm)) continue
+    seen.add(norm)
+    out.push(norm)
+  }
+  return out
+}
+
+/** 扫 thread 历史的 tool_result，收集所有 Write/Edit ok=true 的 path */
+function collectEditedPathsFromThread(repos: RuntimeServices['repos'], threadId: string): string[] {
+  const all = repos.messages.listByThread(threadId)
+  const paths: string[] = []
+  for (const m of all) {
+    if (m.type !== 'tool_result') continue
+    const tr = m.contentJson as { ok?: boolean; value?: { path?: string } } | undefined
+    if (tr?.ok && tr.value?.path) paths.push(tr.value.path)
+  }
+  return paths
+}
+
+// ──────────────────────────────────────────────────────────────
 // Dispatch — 把 LLM tool call 翻译成状态机事件 / 工具执行
 // ──────────────────────────────────────────────────────────────
 async function dispatch(
@@ -576,6 +612,45 @@ async function dispatch(
     }
     case 'emit_deliverable': {
       const args = call.args as { contentText?: string; contentRef?: string; summary: string }
+
+      // V1.3: 防"谎报完成" —— summary/contentText 里声称改了文件，必须有对应的
+      // Write/Edit ok=true 工具调用记录；否则拒绝交付。
+      const claimedText = `${args.summary}\n${args.contentText ?? ''}`
+      const claimedPaths = extractClaimedFilePaths(claimedText)
+      if (claimedPaths.length > 0) {
+        const editedPaths = collectEditedPathsFromThread(repos, thread.id)
+        const unverified = claimedPaths.filter(
+          (cp) => !editedPaths.some((ep) => ep.endsWith('/' + cp) || ep === cp || ep.endsWith(cp)),
+        )
+        if (unverified.length > 0) {
+          log.warn('emit_deliverable.blocked', {
+            reqId,
+            claimedPaths,
+            editedCount: editedPaths.length,
+            unverified,
+          })
+          repos.messages.append({
+            threadId: thread.id,
+            role: 'system',
+            type: 'error',
+            content: {
+              type: 'error',
+              message: `emit_deliverable 已阻止：你在交付物里声称改动了以下文件 [${unverified.join(', ')}]，但没有对应的 Edit / Write 工具调用记录。必须**先用 Edit 或 Write 真改文件**，确认 tool_result.ok=true，才能 emit_deliverable。不要谎报完成。`,
+              fatal: false,
+            },
+          })
+          // 不进入"已交付"状态，让 LLM 下轮去真改
+          return {
+            kind: 'continue',
+            newState: {
+              currentStep: ctx.currentStep,
+              historySummary: ctx.historySummary,
+              budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+            },
+          }
+        }
+      }
+
       // attachments 由 server 层落盘；这里只记录 ref / text
       if (args.contentText) {
         repos.messages.append({

@@ -532,6 +532,85 @@ describe('executeRequirement', () => {
     expect(rs.currentStep).toBe(0)
   })
 
+  test('V1.3: emit_deliverable 声称改文件但没 Edit/Write 记录 → 拒绝交付 + 写 system/error', async () => {
+    const { services, repos, reqId, empId } = setup([
+      // turn 0: 只 emit_deliverable，不真改文件
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_deliverable',
+          args: {
+            summary: '已修改 CardChannelTypeEnum.java 和 CreateCardRequest.java，新增字段完成',
+            contentText: '改动文件：\n1. CardChannelTypeEnum.java\n2. CreateCardRequest.java\n',
+          },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 1: 提供"真改"的兜底（避免 mock LLM 死循环）
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'emit_deliverable',
+          args: { summary: '简单交付', contentText: 'OK' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    // 第 1 次 emit 应被拒绝 → 有 system/error 提示
+    const blocked = msgs.find(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes('emit_deliverable 已阻止'),
+    )
+    expect(blocked).toBeDefined()
+    // 第 2 次（不声称改文件的简单交付）应该通过
+    const req = repos.requirements.findById(reqId)!
+    expect(req.status).toBe('待验收')
+  })
+
+  test('V1.3: 声称的文件有对应 Edit ok=true tool_result → 允许 emit_deliverable', async () => {
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_deliverable',
+          args: {
+            summary: '改动 CardChannelTypeEnum.java',
+            contentText: '改了 CardChannelTypeEnum.java',
+          },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+
+    // 预先写一条"已经成功 Edit 过这个文件"的 tool_result
+    const thread = repos.threads.findByRequirement(reqId)!
+    repos.messages.append({
+      threadId: thread.id,
+      role: 'tool',
+      type: 'tool_result',
+      content: {
+        type: 'tool_result',
+        callId: 'pre',
+        ok: true,
+        value: { path: '/some/abs/path/CardChannelTypeEnum.java', replaced: 1 },
+      },
+    })
+
+    await executeRequirement(reqId, services)
+    expect(repos.requirements.findById(reqId)!.status).toBe('待验收')
+  })
+
   test('resumeRequirement 复位 budgetUsed（防 resume 立刻再撞 cap）', () => {
     const { services, repos, reqId, empId } = setup([])
     assignRequirement(services, reqId, empId, { skipClarification: true })

@@ -211,6 +211,10 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
       '- ⛔ tool_result.ok=false 时**严禁**调用 advance_step。',
       '  引擎会硬阻止并要求你先修复（用 Glob/Read 找到正确 path 再 Edit 成功）。',
       '- 完成本步骤后调 advance_step 前，确认最近一次工具调用是成功的（ok=true）。',
+      '- ⛔ emit_deliverable 的 summary / contentText 里**只能写真改过的文件**。',
+      '  引擎会扫描 thread 历史的 Edit / Write tool_result（ok=true），把声称的文件路径与真实改动对账：',
+      '  任何"声称改了但没找到对应 Edit/Write 记录"的路径都会让 emit_deliverable 被拒绝。',
+      '  → 不要谎报"已修改 X.java / Y.ts"；如果只做了探索（Glob/Grep/Read），不能说"已修改"，必须先真改。',
     ].join('\n'),
   )
 
