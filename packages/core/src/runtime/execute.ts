@@ -355,62 +355,51 @@ export async function executeRequirement(
       decision != null && decision.name !== 'advance_step' && !SYSTEM_TOOL_NAMES.has(decision.name)
 
     if (!decision && saw_stop && textBuf) {
-      // LLM 输出了文本但没 emit 任何 tool_use。
-      // 两种走向：
-      //   A. 本轮"光说不做"——但允许 implicit advance_step 推进 step（保留原行为）；
-      //   B. 但**不重置 stuck 计数**——只有真业务 tool_use 才能重置（外层逻辑）。
-      const acted = hasBusinessToolUsedSinceLastAdvance(repos, thread.id)
-      if (!acted) {
-        consecutiveTextOnlyRounds++
-        log.warn('execute.text_only_round', {
-          reqId,
-          consecutiveTextOnlyRounds,
-          limit: STUCK_TEXT_ONLY_LIMIT,
-          textSample: textBuf.slice(0, 120),
-        })
-        if (consecutiveTextOnlyRounds >= STUCK_TEXT_ONLY_LIMIT) {
-          repos.messages.append({
-            threadId: thread.id,
-            role: 'system',
-            type: 'error',
-            content: {
-              type: 'error',
-              message: `连续 ${STUCK_TEXT_ONLY_LIMIT} 轮 LLM 只输出文本计划没有调用任何业务工具（如 Bash）。引擎判定卡死并暂停。\n\n用户操作建议：\n  ① 看思维链最近几条 text 看 LLM 在想啥，决定 reject 重派 vs resume 后通过澄清回答给出更明确的下一步指令；\n  ② 这个工单的 plan 描述可能太长 / 太抽象 / 让模型走偏了；下次拆得更小步。`,
-              fatal: true,
-            },
-          })
-          return systemPause(
-            services,
-            reqId,
-            'llm_error',
-            `stuck_text_only_${STUCK_TEXT_ONLY_LIMIT}_rounds`,
-          )
-        }
-        // 未到 limit：给 LLM 写一条 system 提示，让它下一轮真用工具
+      // 本轮 LLM 输出文本但没 emit 任何 tool_use ——"光说不做"
+      // 无论 thread 上是否有历史业务工具调用，本轮就是没动手；统一累加计数。
+      consecutiveTextOnlyRounds++
+      log.warn('execute.text_only_round', {
+        reqId,
+        consecutiveTextOnlyRounds,
+        limit: STUCK_TEXT_ONLY_LIMIT,
+        textSample: textBuf.slice(0, 120),
+      })
+      if (consecutiveTextOnlyRounds >= STUCK_TEXT_ONLY_LIMIT) {
         repos.messages.append({
           threadId: thread.id,
           role: 'system',
           type: 'error',
           content: {
             type: 'error',
-            message: `⚠️ 引擎警告（${consecutiveTextOnlyRounds}/${STUCK_TEXT_ONLY_LIMIT}）：你本轮只输出了 markdown 文本计划，**没有调用任何业务工具（Bash 等）**。\n\n本系统的工作流是 **OpenAI function-calling**——你在文本里贴 \`\`\`bash 代码块**不会被执行**，只是被当成自然语言。\n\n下一轮**必须直接 tool_use**（emit Bash tool_call），不要再用文本"陈述"接下来要做什么。如果还想继续，每一步都用 Bash 真执行命令。继续光说不做，第 ${STUCK_TEXT_ONLY_LIMIT} 轮引擎会自动暂停工单。`,
-            fatal: false,
+            message: `连续 ${STUCK_TEXT_ONLY_LIMIT} 轮 LLM 只输出文本没有调用任何业务工具（如 Bash）。引擎判定卡死并暂停。\n\n用户操作建议：\n  ① 看思维链最近几条 text 看 LLM 在想啥，决定 reject 重派 vs resume 后通过澄清回答给出更明确的下一步指令；\n  ② 这个工单的 plan 描述可能太长 / 太抽象 / 让模型走偏了；下次拆得更小步。`,
+            fatal: true,
           },
         })
-        budget.recordIteration()
-        continue
+        return systemPause(
+          services,
+          reqId,
+          'llm_error',
+          `stuck_text_only_${STUCK_TEXT_ONLY_LIMIT}_rounds`,
+        )
       }
-      // acted=true（自上次 advance_step 后有过业务工具）→ implicit advance_step 推进 step
-      // 但 **不** 在这里重置 consecutiveTextOnlyRounds —— 否则光调一次 Bash 就能"赦免"
-      // 后续无限次 stop with text。只有本轮"真做了业务 tool_use"才算反守为攻。
-      decision = {
-        callId: `implicit-${Date.now()}`,
-        name: 'advance_step',
-        args: { step_idx: execState.currentStep, summary: textBuf.trim() },
-      }
+      // 未到 limit：给 LLM 写一条 system 提示，让它下一轮真用工具
+      repos.messages.append({
+        threadId: thread.id,
+        role: 'system',
+        type: 'error',
+        content: {
+          type: 'error',
+          message: `⚠️ 引擎警告（${consecutiveTextOnlyRounds}/${STUCK_TEXT_ONLY_LIMIT}）：你本轮只输出了文本，**没有调用任何业务工具（Bash 等）**。\n\n本系统的工作流是 **OpenAI function-calling**——你在文本里贴 \`\`\`bash 代码块**不会被执行**，只是被当成自然语言。\n\n下一轮**必须直接 tool_use**（emit Bash tool_call），不要再用文本"陈述"接下来要做什么。如果还想继续，每一步都用 Bash 真执行命令。继续光说不做，第 ${STUCK_TEXT_ONLY_LIMIT} 轮引擎会自动暂停工单。\n\n注意：implicit advance_step 也算"光说不做"——你必须 emit 真正的 tool_use（Bash 或其他业务工具），系统才认为你在干活。`,
+          fatal: false,
+        },
+      })
+      // 不再 implicit advance_step —— 等同于强制 LLM 必须 emit tool_use。
+      // 这样能跳出 LLM"反复贴同样错误分析"的循环。
+      budget.recordIteration()
+      continue
     }
 
-    // 只有本轮 LLM 真做了业务 tool_use 才重置 stuck 计数；implicit advance_step 不重置
+    // 只有本轮 LLM 真做了业务 tool_use 才重置 stuck 计数
     if (usedBusinessToolThisRound) consecutiveTextOnlyRounds = 0
 
     budget.recordIteration()
@@ -611,28 +600,6 @@ const SYSTEM_TOOL_NAMES = new Set([
   'spawn_employee',
   'lesson_record',
 ])
-
-function hasBusinessToolUsedSinceLastAdvance(
-  repos: RuntimeServices['repos'],
-  threadId: string,
-): boolean {
-  const all = repos.messages.listByThread(threadId)
-  // 从尾往前扫，直到遇见 advance_step（含 implicit）就停；这之前要至少有一个非系统 tool_call
-  for (let i = all.length - 1; i >= 0; i--) {
-    const m = all[i]!
-    if (m.type !== 'tool_call') continue
-    const c = m.contentJson as { name?: string }
-    const name = c?.name ?? ''
-    if (name === 'advance_step') return false // 本步刚开始；没看到任何业务工具
-    if (!SYSTEM_TOOL_NAMES.has(name)) return true // 业务工具
-  }
-  // 整个 thread 没有 advance_step，也没业务工具 → 视为本步还没动手
-  return all.some((m) => {
-    if (m.type !== 'tool_call') return false
-    const c = m.contentJson as { name?: string }
-    return c?.name != null && !SYSTEM_TOOL_NAMES.has(c.name)
-  })
-}
 
 function detectLastToolFailure(repos: RuntimeServices['repos'], threadId: string): string | null {
   const recent = repos.messages.tailByThread(threadId, 10)
