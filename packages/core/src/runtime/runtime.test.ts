@@ -537,6 +537,111 @@ describe('executeRequirement', () => {
     expect(rs.currentStep).toBe(0)
   })
 
+  test('V2 P0: Bash 命令 exitCode≠0 / status=failed 时 advance_step 被拦', async () => {
+    // 模拟 Bash sed 失败（status='failed', exitCode=1）但 ToolExecutor 包成 ok=true 的情况。
+    // 现实场景：seq 14 sed -i 失败但 LLM 继续 advance_step，应被新 detectLastToolFailure 拦下。
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'fake_bash',
+          args: { command: "sed -i '' 'bad-syntax' file" },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'advance_step',
+          args: { step_idx: 0, summary: '假装完成' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't3',
+          name: 'emit_deliverable',
+          args: { summary: '收尾', contentText: 'x' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    // 把 mockExecutor 改成模拟 Bash 内部失败：ok=true（spawn 成功）但 value.status='failed'
+    services.toolExecutor.invoke = async () =>
+      ({
+        ok: true,
+        value: { status: 'failed', exitCode: 1, stdout: '', stderr: 'sed: bad syntax' },
+      }) as never
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    const blocked = msgs.find(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes('advance_step 已阻止'),
+    )
+    expect(blocked).toBeDefined()
+    // message 应含 "bash failed" 提示
+    const msg = (blocked!.contentJson as { message?: string }).message ?? ''
+    expect(msg).toMatch(/bash (failed|exitCode)/)
+  })
+
+  test('V2 P0: emit_deliverable 也拦"上一步命令失败"（防 sed 失败仍交付）', async () => {
+    // 关键回归：避免 KYC 谎报 bug 复现。LLM 跑 sed 失败后直接 emit_deliverable，
+    // 应该被拦 + LLM 拿到 error message 后下一轮重试或暂停。
+    const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'fake_bash',
+          args: { command: "sed -i '' 'bad' file" },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'emit_deliverable',
+          args: { summary: '已实现 KYC 注册接口', contentText: 'fake' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 2+ 兜底：LLM 看到 error 后真正 emit_deliverable 收尾（理论上）
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't3',
+          name: 'emit_deliverable',
+          args: { summary: '真收尾', contentText: 'real' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    services.toolExecutor.invoke = async () =>
+      ({
+        ok: true,
+        value: { status: 'failed', exitCode: 1, stdout: '', stderr: 'sed: bad' },
+      }) as never
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    const blocked = msgs.find(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes('emit_deliverable 已阻止'),
+    )
+    expect(blocked).toBeDefined()
+  })
+
   test('emit_deliverable 不做"是否真改"对账，员工提交后直接进「待验收」由用户判断真假（借鉴 OpenClaw 设计）', async () => {
     // 即使 LLM 声称改了文件但实际 0 个 Bash 调用 → 引擎不拦截，照样进入待验收。
     // 用户在「待验收」状态看 git diff / 文件内容自己判断是否 reject。

@@ -285,7 +285,13 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
     if (m.role === 'user' || m.role === 'assistant') {
       messages.push({ role: m.role, content: text })
     } else if (m.role === 'tool') {
-      messages.push({ role: 'assistant', content: `[tool] ${text}` })
+      // V2 bugfix: tool_result 用 'user' role 注入，让 LLM 清楚区分"工具返回的观察"
+      // 之前 role='assistant' + 字符串 "[tool] tool_result" 丢失所有工具实际内容，
+      // 导致 LLM 看不到上轮命令结果反复跑同样命令（如 git status 死循环）。
+      messages.push({ role: 'user', content: `[tool_result]\n${text}` })
+    } else if (m.role === 'system') {
+      // 系统通知 / error 也注入（V2 用于 advance_step.blocked / notify-on-exit 等）
+      messages.push({ role: 'user', content: `[system]\n${text}` })
     }
   }
 
@@ -337,11 +343,63 @@ function dedupeMonotonicBreakpoints(raw: number[], systemLen: number): number[] 
   return out
 }
 
+// V2 bugfix: tool result/call/error 都序列化成 LLM 能消化的可读字符串。
+// 之前 tool_result 返回字符串 "tool_result" 丢失所有内容 — LLM 看不到上轮 stdout
+// 反复跑同样命令死循环。
+const TOOL_OUTPUT_TRUNCATE = 2000
+
 function extractText(c: unknown): string | null {
   if (!c || typeof c !== 'object') return null
-  const o = c as { type?: string; text?: string; reason?: string }
-  if (o.type === 'text' || o.type === 'thinking') return o.text ?? null
-  if (o.type === 'plan_update') return `plan_update: ${o.reason ?? ''}`
-  if (o.type === 'tool_result') return `tool_result`
+  const o = c as Record<string, unknown>
+  const ty = typeof o.type === 'string' ? o.type : ''
+  if (ty === 'text' || ty === 'thinking') {
+    return typeof o.text === 'string' ? o.text : null
+  }
+  if (ty === 'plan_update') {
+    return `plan_update: ${typeof o.reason === 'string' ? o.reason : ''}`
+  }
+  if (ty === 'tool_call') {
+    const name = typeof o.name === 'string' ? o.name : '?'
+    const argsStr = JSON.stringify(o.args ?? {}).slice(0, TOOL_OUTPUT_TRUNCATE)
+    return `→ tool_call: ${name}(${argsStr})`
+  }
+  if (ty === 'tool_result') {
+    const ok = o.ok
+    const value = o.value as Record<string, unknown> | string | undefined
+    const error = typeof o.error === 'string' ? o.error : null
+    if (ok === false) {
+      return `← tool_result(error): ${error ?? 'unknown'}`
+    }
+    // value 是 string → 直接截断
+    if (typeof value === 'string') {
+      return `← tool_result(ok): ${value.slice(0, TOOL_OUTPUT_TRUNCATE)}`
+    }
+    // value 是 object（Bash 等返回 { stdout, stderr, exitCode, ... }）→ 抽取关键字段
+    if (value && typeof value === 'object') {
+      const v = value as Record<string, unknown>
+      const parts: string[] = []
+      if (typeof v.exitCode === 'number') parts.push(`exitCode=${v.exitCode}`)
+      if (typeof v.status === 'string') parts.push(`status=${v.status}`)
+      if (typeof v.stdout === 'string' && v.stdout.length > 0) {
+        parts.push(`stdout:\n${v.stdout.slice(0, TOOL_OUTPUT_TRUNCATE)}`)
+      }
+      if (typeof v.stderr === 'string' && v.stderr.length > 0) {
+        parts.push(`stderr:\n${v.stderr.slice(0, 500)}`)
+      }
+      // 其他类型工具（MCP / Process / ...）：JSON 整 dump
+      if (parts.length === 0) {
+        return `← tool_result(ok): ${JSON.stringify(value).slice(0, TOOL_OUTPUT_TRUNCATE)}`
+      }
+      return `← tool_result(ok): ${parts.join('\n')}`
+    }
+    return `← tool_result(ok): ${JSON.stringify(value ?? null).slice(0, TOOL_OUTPUT_TRUNCATE)}`
+  }
+  if (ty === 'error') {
+    const msg = typeof o.message === 'string' ? o.message : 'unknown'
+    return `error: ${msg}`
+  }
+  if (ty === 'clarification_request') {
+    return typeof o.text === 'string' ? `[ask_user] ${o.text}` : null
+  }
   return null
 }

@@ -486,6 +486,48 @@ function handleChunk(
 }
 
 // ──────────────────────────────────────────────────────────────
+// V2 P0 修复: 扫最近 10 条 message，识别"上一次工具调用失败"
+//   - tool_result.ok === false（ToolExecutor 层失败：schema / 超时 / unauthorized）
+//   - tool_result.value.status === 'failed'（Bash 等工具自身报告失败）
+//   - tool_result.value.exitCode 非 0（命令非 0 退出）
+// 任一命中 → 返回错误简述给 advance_step / emit_deliverable 拦截使用；
+// 找到第一条 tool_result 后即停（不再往前看，避免历史失败误伤新成功）。
+// ──────────────────────────────────────────────────────────────
+function detectLastToolFailure(repos: RuntimeServices['repos'], threadId: string): string | null {
+  const recent = repos.messages.tailByThread(threadId, 10)
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const m = recent[i]!
+    if (m.type !== 'tool_result') continue
+    const tr = m.contentJson as {
+      ok?: boolean
+      error?: string
+      value?: {
+        status?: string
+        exitCode?: number | null
+        stderr?: string
+        isError?: boolean
+      }
+    }
+    if (tr.ok === false) return `tool error: ${tr.error ?? 'unknown'}`
+    const v = tr.value
+    if (v && typeof v === 'object') {
+      if (v.status === 'failed') {
+        const stderr = typeof v.stderr === 'string' ? v.stderr.trim().slice(0, 200) : ''
+        return `bash failed (exitCode=${v.exitCode ?? '?'}): ${stderr || 'no stderr'}`
+      }
+      if (typeof v.exitCode === 'number' && v.exitCode !== 0) {
+        const stderr = typeof v.stderr === 'string' ? v.stderr.trim().slice(0, 200) : ''
+        return `bash exitCode=${v.exitCode}: ${stderr || 'no stderr'}`
+      }
+      // MCP tool 返回 isError=true
+      if (v.isError === true) return `mcp tool returned isError=true`
+    }
+    return null // 最后一条 tool_result 看上去 OK，放行
+  }
+  return null
+}
+
+// ──────────────────────────────────────────────────────────────
 // Dispatch — 把 LLM tool call 翻译成状态机事件 / 工具执行
 // ──────────────────────────────────────────────────────────────
 async function dispatch(
@@ -515,42 +557,32 @@ async function dispatch(
       const args = call.args as { step_idx?: number; summary?: string }
       const completedIdx =
         typeof args.step_idx === 'number' && args.step_idx >= 0 ? args.step_idx : ctx.currentStep
-      // V1.2 (2): 上一次 tool 调用失败时硬阻止 advance（防 LLM 假装完成）
-      //   扫最近 10 条 message，找最近一条 tool_result；若 ok=false → 拒绝，
-      //   写一条 system/error 让 LLM 下一轮看到，并不更新 plan / currentStep / historySummary。
-      const recent = repos.messages.tailByThread(thread.id, 10)
-      for (let i = recent.length - 1; i >= 0; i--) {
-        const m = recent[i]!
-        if (m.type !== 'tool_result') continue
-        const tr = m.contentJson as { ok?: boolean; error?: string }
-        if (tr.ok === false) {
-          const errMsg = tr.error ?? 'unknown'
-          log.warn('advance_step.blocked', {
-            reqId,
-            lastToolError: errMsg,
-            attemptedStep: completedIdx,
-          })
-          repos.messages.append({
-            threadId: thread.id,
-            role: 'system',
+      // V1.2 (2) + V2 P0 修复: 上一次 tool 调用失败时硬阻止 advance（防 LLM 假装完成）
+      const lastFail = detectLastToolFailure(repos, thread.id)
+      if (lastFail) {
+        log.warn('advance_step.blocked', {
+          reqId,
+          lastToolError: lastFail,
+          attemptedStep: completedIdx,
+        })
+        repos.messages.append({
+          threadId: thread.id,
+          role: 'system',
+          type: 'error',
+          content: {
             type: 'error',
-            content: {
-              type: 'error',
-              message: `advance_step 已阻止：上一次工具调用失败 (${errMsg.slice(0, 200)})。必须先修复（用 Glob/Read 找到正确路径再 Edit），不能跳过失败标记 step done。`,
-              fatal: false,
-            },
-          })
-          // 不推进 plan / step / history；让 LLM 下一轮重试
-          return {
-            kind: 'continue',
-            newState: {
-              currentStep: ctx.currentStep,
-              historySummary: ctx.historySummary,
-              budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
-            },
-          }
+            message: `advance_step 已阻止：上一次工具调用失败 (${lastFail.slice(0, 300)})。必须先修复（看 stderr / 改命令 / 验证路径），不能跳过失败标记 step done。`,
+            fatal: false,
+          },
+        })
+        return {
+          kind: 'continue',
+          newState: {
+            currentStep: ctx.currentStep,
+            historySummary: ctx.historySummary,
+            budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+          },
         }
-        break // 最近一条 tool_result 是 ok=true → 放行
       }
       // ① 更新 plan：把 idx <= completedIdx 的 step 标 done（容忍 LLM 跳号）
       const reqRow = repos.requirements.findById(reqId)
@@ -678,6 +710,35 @@ async function dispatch(
     }
     case 'emit_deliverable': {
       const args = call.args as { contentText?: string; contentRef?: string; summary: string }
+      // V2 P0 修复（emit_deliverable.blocked）：上一次工具调用失败 → 拒绝交付
+      // 不在 runtime 层判断"是否真改了文件"（借 OpenClaw 哲学），但若最后一步明显
+      // 失败（exitCode≠0 / status='failed'），那不是"待用户判断真假"，而是 LLM
+      // 没意识到失败就交付 — 这种情况硬拦更利落。
+      const lastDeliverFail = detectLastToolFailure(repos, thread.id)
+      if (lastDeliverFail) {
+        log.warn('emit_deliverable.blocked', {
+          reqId,
+          lastToolError: lastDeliverFail,
+        })
+        repos.messages.append({
+          threadId: thread.id,
+          role: 'system',
+          type: 'error',
+          content: {
+            type: 'error',
+            message: `emit_deliverable 已阻止：上一次工具调用失败 (${lastDeliverFail.slice(0, 300)})。请先把失败修好（看 stderr / 改命令 / 路径验证），再交付。`,
+            fatal: false,
+          },
+        })
+        return {
+          kind: 'continue',
+          newState: {
+            currentStep: ctx.currentStep,
+            historySummary: ctx.historySummary,
+            budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+          },
+        }
+      }
       // 不在 runtime 层判断"是否真改了文件" —— 借鉴 OpenClaw 设计哲学：
       // 员工提交工作，老板验收（approve / reject）时判断真假，引擎不预判。
       // 失败 / 谎报由用户在「待验收」状态看 git diff 等线索后 reject 即可。
