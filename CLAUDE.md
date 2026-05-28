@@ -42,7 +42,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`9fd305b` docs: ALPHA_TASKS §15 — V2 端到端真实业务验证总结（4 轮 KYC 实战 + 3 个 P0 bug 修复 + V2 11/11 能力实战验证）
+> 最近：`562207c` docs: ALPHA_TASKS §16 — V2 第二轮端到端验证（openai-compat+gpt-5.3-chat-latest 7 轮迭代 + 3 个 P0 引擎修复 + LLM 真改代码突破）
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
