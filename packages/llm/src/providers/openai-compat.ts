@@ -169,8 +169,13 @@ function buildBody(
 ) {
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = []
   if (req.system) messages.push({ role: 'system', content: req.system })
+  // V2 P0 bug 6 修复：OpenAI 协议要求 `role:'tool'` message 必须紧跟一个含 tool_calls
+  // 的 assistant message。composer 截 chat history 窗口可能切走对应 tool_call，
+  // 留下 orphan tool_result → API 报 400 Invalid parameter。
+  // 追踪本轮已发出的 tool_call ID，遇 orphan tool_result 改写成 user 文本而不发 role:'tool'。
+  const knownToolCallIds = new Set<string>()
   for (const m of req.messages) {
-    appendOpenAIMessages(messages, m)
+    appendOpenAIMessages(messages, m, knownToolCallIds)
   }
   const body: Record<string, unknown> = {
     model,
@@ -206,6 +211,7 @@ function buildBody(
 export function appendOpenAIMessages(
   out: OpenAI.Chat.ChatCompletionMessageParam[],
   m: LLMMessage,
+  knownToolCallIds?: Set<string>,
 ): void {
   if (typeof m.content === 'string') {
     out.push({ role: m.role, content: m.content } as OpenAI.Chat.ChatCompletionMessageParam)
@@ -223,6 +229,7 @@ export function appendOpenAIMessages(
           type: 'function',
           function: { name: b.name, arguments: JSON.stringify(b.args ?? {}) },
         })
+        knownToolCallIds?.add(b.callId)
       }
       // tool_result 不应在 assistant 里出现；忽略
     }
@@ -242,6 +249,11 @@ export function appendOpenAIMessages(
   const textParts: string[] = []
   for (const b of m.content) {
     if (b.type === 'tool_result') {
+      // V2 P0 bug 6：orphan tool_result（窗口切断对应 tool_call）→ 转 user 文本，避免协议错误
+      if (knownToolCallIds && !knownToolCallIds.has(b.callId)) {
+        textParts.push(`[tool_result of ${b.callId.slice(0, 16)}]\n${b.output}`)
+        continue
+      }
       out.push({
         role: 'tool',
         tool_call_id: b.callId,
