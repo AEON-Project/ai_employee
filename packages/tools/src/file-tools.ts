@@ -181,16 +181,24 @@ export const bashTool: ToolDef<BashArgs, BashResult> = {
   kind: 'standard',
   description: [
     '在用户本地机器上执行任意 shell 命令（zsh -lc）。等同于用户在终端的完整权限。',
+    '⛔ **本系统没有 `apply_patch` / `Write` / `Edit` 这类专用文件工具**。',
+    '   写/改文件统一用本 Bash 工具，下面给了几种可靠写法。',
     '可以做任何事：',
     '  - 查文件：`find . -name "*.java"`、`ls -la`、`tree -L 2`',
     '  - 看内容：`cat file`、`sed -n "10,30p" file`、`head -50 file`',
     '  - 搜内容：`grep -rn "pattern" path/`、`rg "pattern"`',
-    '  - 改文件：`sed -i "" "s/old/new/g" file.java`（macOS）、`echo "..." > file`、`cat > file <<EOF ... EOF`',
+    '  - 改文件（首选写法）：',
+    "      `mkdir -p /abs/path/to/parent && cat > /abs/path/to/file.java <<'EOF'",
+    '       <full file contents>',
+    '       EOF`',
+    '    要 in-place 替换 1-2 行用 `sed -i \"\" "s/OLD/NEW/" /abs/path/file`（macOS）。',
+    '    多段 patch 推荐：先 cat 整个文件读出来 → 全量 cat heredoc 覆盖写回。',
     '  - 装软件：`brew install xxx`、`npm install yyy`、`pip install zzz`',
     '  - 编译：`mvn compile`、`go build`、`cargo check`',
     '  - 网络：`curl ...`、`wget ...`、`gh pr view ...`',
     '  - 权限：`chmod +x ...`、`sudo ...`（如有 sudo 配置）',
-    '默认 cwd = server 启动目录；绝对路径优先。',
+    '默认 cwd = 项目 workdir（若工单关联了项目）；否则 = server 启动目录。',
+    '⛔ **强烈建议所有路径写绝对路径**（项目根能在 plan 描述里看到），别赌 cwd。',
     '默认 timeout_ms=120000（120s）；最大 600000。',
     '长命令（mvn compile / npm install）：传 yield_ms（默认 30000，30s）—— 超时**不会被杀**，',
     '而是转后台运行，立即返回 partial output + sessionId；后续用 `Process` 工具 read sessionId 看进度。',
@@ -240,11 +248,13 @@ export const bashTool: ToolDef<BashArgs, BashResult> = {
     additionalProperties: false,
   },
   invoke: async (args, ctx) => {
+    // V3 BUG #3：未显式给 cwd 时，优先用 project.workdir（避免 LLM 在 server 工作目录里乱写文件）
+    const defaultCwd = ctx.projectWorkdir ?? process.cwd()
     const cwd = args.cwd
       ? isAbsolute(args.cwd)
         ? args.cwd
-        : resolve(process.cwd(), args.cwd)
-      : process.cwd()
+        : resolve(defaultCwd, args.cwd)
+      : defaultCwd
     const timeoutMs = args.timeout_ms ?? DEFAULT_BASH_TIMEOUT_MS
     const yieldMs = args.background ? 0 : (args.yield_ms ?? DEFAULT_YIELD_MS)
     const envOverride = args.env ?? {}

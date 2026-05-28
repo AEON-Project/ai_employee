@@ -67,7 +67,7 @@ export function cancelRequirement(services: RuntimeServices, reqId: RequirementI
   const req = repos.requirements.findById(reqId)
   if (!req) throw new Error(`requirement not found: ${reqId}`)
   const t = transition(req.status, { kind: 'cancel' })
-  repos.requirements.setStatus(reqId, t.to)
+  repos.requirements.setStatus(reqId, t.to, { completedAt: new Date() })
   bus.emit('requirement.state_changed', { reqId, from: t.from, to: t.to, reason: t.reason })
   bus.emit('requirement.cancelled', { reqId })
 }

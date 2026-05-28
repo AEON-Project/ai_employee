@@ -206,7 +206,27 @@ export async function executeRequirement(
   let llmRetries = 0
   const MAX_LLM_RETRIES = opts.maxLlmRetries ?? DEFAULT_MAX_LLM_RETRIES
 
+  // V3 BUG #4: 连续"纯文本无业务工具"轮次计数。limit 内每轮给 LLM 写一条 system 提示
+  // 让它纠错；到达 limit 时强制 systemPause，不让 LLM 反复编 markdown 计划烧 token。
+  let consecutiveTextOnlyRounds = 0
+  const STUCK_TEXT_ONLY_LIMIT = 3
+
   for (let loop = 0; loop < maxLoops; loop++) {
+    // ⓪ Status gate — 外部 cancel/pause 后立刻退出循环，停止烧 LLM token
+    const cur = repos.requirements.findById(reqId)
+    if (!cur) {
+      log.warn('execute.req_disappeared', { reqId })
+      return { exit: 'forced_end' }
+    }
+    if (cur.status !== '进行中') {
+      log.info('execute.status_left_running', { reqId, status: cur.status, loop })
+      if (cur.status === '已取消') return { exit: 'forced_end' }
+      if (cur.status === '已暂停') return { exit: 'paused' }
+      if (cur.status === '等待回答') return { exit: 'awaiting_user' }
+      if (cur.status === '待验收' || cur.status === '已完成') return { exit: 'delivered' }
+      return { exit: 'forced_end' }
+    }
+
     // ① Budget gate
     const r = budget.check()
     if (r.kind === 'exceeded') {
@@ -327,13 +347,59 @@ export async function executeRequirement(
     })
     log.debug('llm.call.response', { reqId, decision, textBuf })
     if (!decision && saw_stop && textBuf) {
-      // 隐式 advance_step：把累积文本视为本步 summary
+      // V3 BUG #4 修复：implicit advance_step 必须满足"本步内调过业务工具"。
+      // 否则视为"光说不做"——LLM 反复贴 markdown 计划但不真 tool_use，会持续烧 token。
+      const acted = hasBusinessToolUsedSinceLastAdvance(repos, thread.id)
+      if (!acted) {
+        consecutiveTextOnlyRounds++
+        log.warn('execute.text_only_round', {
+          reqId,
+          consecutiveTextOnlyRounds,
+          limit: STUCK_TEXT_ONLY_LIMIT,
+          textSample: textBuf.slice(0, 120),
+        })
+        if (consecutiveTextOnlyRounds >= STUCK_TEXT_ONLY_LIMIT) {
+          repos.messages.append({
+            threadId: thread.id,
+            role: 'system',
+            type: 'error',
+            content: {
+              type: 'error',
+              message: `连续 ${STUCK_TEXT_ONLY_LIMIT} 轮 LLM 只输出文本计划没有调用任何业务工具（如 Bash）。引擎判定卡死并暂停。\n\n用户操作建议：\n  ① 看思维链最近几条 text 看 LLM 在想啥，决定 reject 重派 vs resume 后通过澄清回答给出更明确的下一步指令；\n  ② 这个工单的 plan 描述可能太长 / 太抽象 / 让模型走偏了；下次拆得更小步。`,
+              fatal: true,
+            },
+          })
+          return systemPause(
+            services,
+            reqId,
+            'llm_error',
+            `stuck_text_only_${STUCK_TEXT_ONLY_LIMIT}_rounds`,
+          )
+        }
+        // 未到 limit：给 LLM 写一条 system 提示，让它下一轮真用工具
+        repos.messages.append({
+          threadId: thread.id,
+          role: 'system',
+          type: 'error',
+          content: {
+            type: 'error',
+            message: `⚠️ 引擎警告（${consecutiveTextOnlyRounds}/${STUCK_TEXT_ONLY_LIMIT}）：你本轮只输出了 markdown 文本计划，**没有调用任何业务工具（Bash 等）**。\n\n本系统的工作流是 **OpenAI function-calling**——你在文本里贴 \`\`\`bash 代码块**不会被执行**，只是被当成自然语言。\n\n下一轮**必须直接 tool_use**（emit Bash tool_call），不要再用文本"陈述"接下来要做什么。如果还想继续，每一步都用 Bash 真执行命令。继续光说不做，第 ${STUCK_TEXT_ONLY_LIMIT} 轮引擎会自动暂停工单。`,
+            fatal: false,
+          },
+        })
+        budget.recordIteration()
+        continue
+      }
+      // 有过业务工具 → 把累积文本视为本步 summary，合法 implicit advance_step
       decision = {
         callId: `implicit-${Date.now()}`,
         name: 'advance_step',
         args: { step_idx: execState.currentStep, summary: textBuf.trim() },
       }
     }
+
+    // 任何明确 decision 路径（不论是真 tool_use 还是 implicit advance）都重置 stuck 计数
+    if (decision) consecutiveTextOnlyRounds = 0
 
     budget.recordIteration()
 
@@ -515,6 +581,45 @@ function countBusinessToolCalls(repos: RuntimeServices['repos'], threadId: strin
     if (m.type === 'tool_call') n++
   }
   return n
+}
+
+/**
+ * V3 BUG #4：检测自上次 advance_step 以来，LLM 有没有调过任何"动手"工具。
+ * "动手" = 非系统 tool_call（Bash / Process 等）；ask_user / advance_step / update_plan /
+ * emit_deliverable / spawn_employee 等系统工具不算"动手"。
+ *
+ * 返回 true → 本步有过真实工具调用，implicit advance_step 是合理的（积累文本当 summary）。
+ * 返回 false → 本步只输出过文本，没真动手；implicit advance_step 应被拒绝。
+ */
+const SYSTEM_TOOL_NAMES = new Set([
+  'advance_step',
+  'update_plan',
+  'ask_user',
+  'emit_deliverable',
+  'spawn_employee',
+  'lesson_record',
+])
+
+function hasBusinessToolUsedSinceLastAdvance(
+  repos: RuntimeServices['repos'],
+  threadId: string,
+): boolean {
+  const all = repos.messages.listByThread(threadId)
+  // 从尾往前扫，直到遇见 advance_step（含 implicit）就停；这之前要至少有一个非系统 tool_call
+  for (let i = all.length - 1; i >= 0; i--) {
+    const m = all[i]!
+    if (m.type !== 'tool_call') continue
+    const c = m.contentJson as { name?: string }
+    const name = c?.name ?? ''
+    if (name === 'advance_step') return false // 本步刚开始；没看到任何业务工具
+    if (!SYSTEM_TOOL_NAMES.has(name)) return true // 业务工具
+  }
+  // 整个 thread 没有 advance_step，也没业务工具 → 视为本步还没动手
+  return all.some((m) => {
+    if (m.type !== 'tool_call') return false
+    const c = m.contentJson as { name?: string }
+    return c?.name != null && !SYSTEM_TOOL_NAMES.has(c.name)
+  })
 }
 
 function detectLastToolFailure(repos: RuntimeServices['repos'], threadId: string): string | null {
@@ -1373,6 +1478,12 @@ async function dispatch(
         },
       })
       bus.emit('tool.invoked', { reqId, tool: call.name, input: call.args })
+      // V3 BUG #3：把项目 workdir 透传给 ToolContext，Bash 默认 cwd 才不会落到 server 目录
+      const reqRowForCwd = repos.requirements.findById(reqId)
+      const projForCwd = reqRowForCwd?.projectId
+        ? repos.projects.findById(reqRowForCwd.projectId)
+        : null
+      const projectWorkdir = projForCwd?.workdir ?? undefined
       const r = await services.toolExecutor.invoke(
         call,
         {
@@ -1380,6 +1491,7 @@ async function dispatch(
           employeeId: employee.id,
           threadId: thread.id,
           signal: new AbortController().signal,
+          projectWorkdir,
         },
         { grantedNames: ctx.grantedNames },
       )

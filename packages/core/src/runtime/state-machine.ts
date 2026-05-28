@@ -134,6 +134,7 @@ function compute(
       if (ev.kind === 'deliver') return { to: '待验收', reason: 'deliver' }
       if (ev.kind === 'user_pause') return { to: '已暂停', reason: 'user_pause' }
       if (ev.kind === 'system_pause') return { to: '已暂停', reason: `system:${ev.reason}` }
+      if (ev.kind === 'cancel') return { to: '已取消', reason: 'user_cancel_in_progress' }
       if (ev.kind === 'force_end') {
         return ev.keep
           ? { to: '已完成', reason: 'force_end_keep' }

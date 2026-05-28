@@ -42,6 +42,12 @@ export interface ToolContext {
   threadId: ThreadId
   /** runtime 自身实现，tool 可用 ctx.emit() 主动发事件（很少用） */
   signal: AbortSignal
+  /**
+   * V3 BUG #3 修复：工单所属项目的 workdir。
+   * Bash 工具：当 args.cwd 未指定时，作为默认 cwd（替代 process.cwd()）。
+   * 没有 projectId 或 project.workdir 为空时为 undefined。
+   */
+  projectWorkdir?: string
 }
 
 /** LLM 流式输出的 tool_use_stop → 引擎 dispatch 之前的形态 */

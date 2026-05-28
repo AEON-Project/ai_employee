@@ -90,7 +90,14 @@ export interface RuntimeToolRegistry {
 export interface RuntimeToolExecutor {
   invoke(
     call: { callId: string; name: string; args: unknown },
-    ctx: { requirementId: string; employeeId: string; threadId: string; signal: AbortSignal },
+    ctx: {
+      requirementId: string
+      employeeId: string
+      threadId: string
+      signal: AbortSignal
+      /** V3 BUG #3：工单关联项目的 workdir；Bash 工具默认 cwd 用它 */
+      projectWorkdir?: string
+    },
     opts: { grantedNames: Iterable<string> },
   ): Promise<{ ok: boolean; value?: unknown; error?: { kind: string; message: string } }>
 }

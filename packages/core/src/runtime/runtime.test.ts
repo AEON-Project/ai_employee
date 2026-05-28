@@ -711,6 +711,89 @@ describe('executeRequirement', () => {
     expect(blocked).toBeUndefined()
   })
 
+  test('V3 BUG #4: LLM 连续 3 轮纯文本无业务工具 → systemPause（防"光说不做"循环烧 token）', async () => {
+    // 模拟 gpt-5.3-chat-latest 的"贴 markdown 代码块当解释"卡死现象：
+    // 每轮都 stop with text，但从不 tool_use Bash。
+    const textOnlyTurn = [
+      {
+        type: 'text_delta',
+        text: '## ✅ 步骤 N\n我接下来要 cp xxx 文件……（实际没真调 Bash）',
+      } as RuntimeLLMChunk,
+      { type: 'message_stop', reason: 'end_turn' } as RuntimeLLMChunk,
+    ]
+    const { services, repos, reqId, empId, bus } = setup([
+      textOnlyTurn,
+      textOnlyTurn,
+      textOnlyTurn,
+      textOnlyTurn, // 兜底
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+
+    const pauseEvents: string[] = []
+    bus.on('requirement.paused', (p) => pauseEvents.push(p.reason))
+
+    const r = await executeRequirement(reqId, services)
+
+    expect(r.exit).toBe('paused')
+    const req = repos.requirements.findById(reqId)!
+    expect(req.status).toBe('已暂停')
+    expect(pauseEvents).toContain('llm_error')
+
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    // 应该有至少 1 条警告 + 1 条最终 stuck error
+    const warnings = msgs.filter(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes('引擎警告'),
+    )
+    const final = msgs.find(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes('引擎判定卡死'),
+    )
+    expect(warnings.length).toBeGreaterThanOrEqual(2) // 第 1/3 + 第 2/3 警告
+    expect(final).toBeDefined()
+  })
+
+  test('V3 BUG #4: 调过业务工具的轮次后 implicit advance_step 仍然有效（防误伤正常流程）', async () => {
+    // 第 1 轮真调 Bash → 第 2 轮纯文本 stop（合理：把累积文本当本步 summary）
+    const { services, repos, reqId, empId } = setup([
+      // turn 0: 调 fake_bash 业务工具
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'fake_bash',
+          args: { command: 'ls' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 1: 纯文本 stop（应该 implicit advance_step，不被拦）
+      [
+        { type: 'text_delta', text: '本步完成探索，准备下一步' },
+        { type: 'message_stop', reason: 'end_turn' },
+      ],
+      // turn 2: emit_deliverable 收尾
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't3',
+          name: 'emit_deliverable',
+          args: { summary: 'done', contentText: 'x' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+
+    const r = await executeRequirement(reqId, services)
+    expect(r.exit).toBe('delivered')
+    expect(repos.requirements.findById(reqId)!.status).toBe('待验收')
+  })
+
   test('V2 P0: emit_deliverable 拦"零业务工具调用"（防 KYC 第 6 轮 LLM 第 1 轮直接 emit 谎报）', async () => {
     // KYC 第 6 轮 gpt-5.3-chat-latest 第 1 轮 LLM 调用就走 emit_deliverable，
     // 把 Java 代码贴在 contentText 里假装完成，绕过 detectLastToolFailure（无"上一个失败"）。
