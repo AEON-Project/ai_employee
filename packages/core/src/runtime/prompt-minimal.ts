@@ -24,7 +24,8 @@ export interface MinimalPrompt {
   }[]
 }
 
-const DEFAULT_RECENT = 10
+// V2 调优：从 10 → 30，对齐 composer.ts；理由见 composer.ts DEFAULT_RECENT 注释
+const DEFAULT_RECENT = 30
 
 export function composeMinimalPrompt(repos: Repos, input: MinimalPromptInput): MinimalPrompt {
   const req = repos.requirements.findById(input.reqId)

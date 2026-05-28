@@ -55,7 +55,19 @@ export interface ComposedPrompt {
   }
 }
 
-const DEFAULT_RECENT = 10
+/**
+ * 默认每轮 LLM 调用注入的 chat history message 数。
+ *
+ * 每个工具往返 = 2 条 message（tool_call + tool_result），所以 N 条 ≈ N/2 个工具历史。
+ *
+ * V2 调优（之前是 10）：真实业务验证（KYC 第 5 轮 40 次 Bash 调用）发现 10 太小——
+ * 每轮 LLM 只看到最近 5 对工具往返，前面读过的 stdout 全失忆，导致反复 cat 同一文件
+ * 8 次（每次以为自己第一次读），永远进不到写阶段，最终撞 budget_iterations。
+ *
+ * 30 ≈ 15 个工具往返，覆盖典型"读 5 个文件 → 改 2 个文件 → mvn compile"流程；
+ * token 成本可控（chat history 不在 prompt cache 里，每轮重传，但 stdout 通常 < 100KB）。
+ */
+const DEFAULT_RECENT = 30
 const DEFAULT_RECALL_K = 5
 
 export async function compose(repos: Repos, input: ComposeInput): Promise<ComposedPrompt> {
@@ -271,6 +283,12 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
       '  引擎会硬阻止并要求你先修好（重新查路径 / 改命令）。',
       '- emit_deliverable 时如实汇报：summary / contentText 写真实改动；用户会在"待验收"',
       '  状态查看代码（git diff / 文件内容）后决定 approve 或 reject。**谎报会被 reject**。',
+      '',
+      '### 🚫 防"反复探索不动手"',
+      '- 每个目标文件**最多 cat / sed -n / grep 3 次**。第 3 次还没拿到所需信息 → 立刻 ask_user 或换思路。',
+      '- 当你已经看完关键文件（Controller / Service / 工具类 / DTO）后，**下一步必须是写**（Edit / sed -i / cat heredoc）。',
+      '- 看到自己上一轮在读同一文件 → 这是"失忆循环"信号，立刻动手写代码 / 编译验证，不要再读。',
+      '- ⛔ 不要每轮都重新 cat 同一份代码；chat history 里已有的 stdout 直接复用。',
     ].join('\n'),
   )
 
