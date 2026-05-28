@@ -43,9 +43,29 @@ export interface LLMToolSchema {
 // ──────────────────────────────────────────────────────────────
 // 请求体（adapter 输入）
 // ──────────────────────────────────────────────────────────────
+
+/**
+ * Protocol-agnostic content block — 让 composer 用结构化 IR 表达 chat history，
+ * provider 自行翻译成 Anthropic content blocks 或 OpenAI tool_calls/role:tool。
+ *
+ * 之前 composer 把 tool_call / tool_result 字符串化（如 "→ tool_call: Bash({...})")，
+ * Anthropic 能凭文本推断但 OpenAI Chat Completions 视角下 LLM 看不到自己真的调过工具，
+ * 导致 gpt-5.x 等模型陷入 stop loop 反复问 "请贴代码"（P0 bug 4）。
+ */
+export type LLMContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_call'; callId: string; name: string; args: unknown }
+  | { type: 'tool_result'; callId: string; output: string; isError?: boolean }
+
 export interface LLMMessage {
-  role: 'system' | 'user' | 'assistant'
-  content: string
+  /**
+   * 'system' 走 LLMRequest.system；这里只剩 user / assistant。
+   * tool_result 也包在 user 消息里（IR 层与 Anthropic 一致），
+   * OpenAI provider 翻译时拆成独立的 role:'tool' message。
+   */
+  role: 'user' | 'assistant'
+  /** 字符串走旧路径；blocks 走 IR 翻译路径（推荐） */
+  content: string | LLMContentBlock[]
 }
 
 export interface LLMRequest {

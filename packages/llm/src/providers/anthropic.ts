@@ -14,6 +14,8 @@ import type {
   CreateClientOptions,
   LLMChunk,
   LLMClient,
+  LLMContentBlock,
+  LLMMessage,
   LLMRequest,
   LLMResponse,
   LLMToolSchema,
@@ -168,7 +170,7 @@ function buildBody(
   const body: Record<string, unknown> = {
     model,
     max_tokens: req.maxTokens ?? maxTokens ?? 4096,
-    messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+    messages: req.messages.map(toAnthropicMessage),
   }
   if (req.system) {
     body.system = buildSystemBlocks(req.system, req.cacheBreakpoints)
@@ -222,6 +224,49 @@ function buildSystemBlocks(
     blocks.push({ type: 'text', text: system.slice(prev) })
   }
   return blocks
+}
+
+/**
+ * 把 LLMMessage 翻译成 Anthropic message：
+ *   - content: string → 原样传
+ *   - content: LLMContentBlock[] →
+ *       text         → { type: 'text', text }
+ *       tool_call    → { type: 'tool_use', id, name, input: args }
+ *       tool_result  → { type: 'tool_result', tool_use_id: callId, content: output, is_error? }
+ *
+ * Anthropic 协议：tool_result 仍在 user role 里包成 content block（IR 与之一致）。
+ */
+/** Exported for unit tests; do not depend on this from outside the llm package. */
+export function toAnthropicMessage(m: LLMMessage): {
+  role: 'user' | 'assistant'
+  content: string | AnthropicContentBlock[]
+} {
+  if (typeof m.content === 'string') {
+    return { role: m.role, content: m.content }
+  }
+  const blocks: AnthropicContentBlock[] = []
+  for (const b of m.content) {
+    blocks.push(toAnthropicBlock(b))
+  }
+  return { role: m.role, content: blocks }
+}
+
+type AnthropicContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
+
+function toAnthropicBlock(b: LLMContentBlock): AnthropicContentBlock {
+  switch (b.type) {
+    case 'text':
+      return { type: 'text', text: b.text }
+    case 'tool_call':
+      return { type: 'tool_use', id: b.callId, name: b.name, input: b.args ?? {} }
+    case 'tool_result':
+      return b.isError
+        ? { type: 'tool_result', tool_use_id: b.callId, content: b.output, is_error: true }
+        : { type: 'tool_result', tool_use_id: b.callId, content: b.output }
+  }
 }
 
 function toAnthropicTool(t: LLMToolSchema) {

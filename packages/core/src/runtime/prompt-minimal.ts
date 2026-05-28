@@ -6,6 +6,7 @@
  */
 
 import type { Repos } from '@ai-emp/storage'
+import type { RuntimeLLMContentBlock } from './services.js'
 // 上面 import 在 core 依赖 storage 后可用
 
 export interface MinimalPromptInput {
@@ -17,7 +18,10 @@ export interface MinimalPromptInput {
 
 export interface MinimalPrompt {
   system: string
-  messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+  messages: {
+    role: 'user' | 'assistant'
+    content: string | RuntimeLLMContentBlock[]
+  }[]
 }
 
 const DEFAULT_RECENT = 10
@@ -72,24 +76,61 @@ export function composeMinimalPrompt(repos: Repos, input: MinimalPromptInput): M
   const messages: MinimalPrompt['messages'] = []
   // 需求描述作为第一条 user message
   messages.push({ role: 'user', content: `# 需求\n${req.title}\n\n${req.description}` })
+  // V2 P0 bug 4 修复：输出结构化 LLMContentBlock，让 provider 翻译 tool_use/tool_result
   for (const m of recent) {
-    const text = extractText(m.contentJson)
-    if (!text) continue
-    if (m.role === 'user' || m.role === 'assistant') {
-      messages.push({ role: m.role, content: text })
-    } else if (m.role === 'tool') {
-      messages.push({ role: 'assistant', content: `[tool] ${text}` })
+    const block = extractBlock(m.contentJson)
+    if (!block) continue
+    if (m.role === 'assistant') {
+      messages.push({ role: 'assistant', content: [block] })
+    } else if (m.role === 'tool' || m.role === 'user') {
+      messages.push({ role: 'user', content: [block] })
     }
   }
 
   return { system, messages }
 }
 
-function extractText(c: unknown): string | null {
+function extractBlock(c: unknown): RuntimeLLMContentBlock | null {
   if (!c || typeof c !== 'object') return null
-  const o = c as { type?: string; text?: string; summary?: string; reason?: string }
-  if (o.type === 'text' || o.type === 'thinking') return o.text ?? null
-  if (o.type === 'plan_update') return `plan_update: ${o.reason ?? ''}`
-  if (o.type === 'tool_result') return `tool_result`
+  const o = c as Record<string, unknown>
+  const ty = typeof o.type === 'string' ? o.type : ''
+  if (ty === 'text' || ty === 'thinking') {
+    return typeof o.text === 'string' ? { type: 'text', text: o.text } : null
+  }
+  if (ty === 'plan_update') {
+    return {
+      type: 'text',
+      text: `plan_update: ${typeof o.reason === 'string' ? o.reason : ''}`,
+    }
+  }
+  if (ty === 'tool_call') {
+    const name = typeof o.name === 'string' ? o.name : '?'
+    const callId = typeof o.callId === 'string' ? o.callId : ''
+    if (!callId) return null
+    return { type: 'tool_call', callId, name, args: o.args ?? {} }
+  }
+  if (ty === 'tool_result') {
+    const callId = typeof o.callId === 'string' ? o.callId : ''
+    if (!callId) return null
+    const ok = o.ok
+    const value = o.value
+    const error = typeof o.error === 'string' ? o.error : null
+    if (ok === false) {
+      return {
+        type: 'tool_result',
+        callId,
+        output: `error: ${error ?? 'unknown'}`,
+        isError: true,
+      }
+    }
+    if (typeof value === 'string') {
+      return { type: 'tool_result', callId, output: value.slice(0, 2000) }
+    }
+    return {
+      type: 'tool_result',
+      callId,
+      output: JSON.stringify(value ?? null).slice(0, 2000),
+    }
+  }
   return null
 }

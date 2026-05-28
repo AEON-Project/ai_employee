@@ -12,6 +12,7 @@ import type {
   CreateClientOptions,
   LLMChunk,
   LLMClient,
+  LLMMessage,
   LLMRequest,
   LLMResponse,
   LLMToolSchema,
@@ -169,7 +170,7 @@ function buildBody(
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = []
   if (req.system) messages.push({ role: 'system', content: req.system })
   for (const m of req.messages) {
-    messages.push({ role: m.role, content: m.content })
+    appendOpenAIMessages(messages, m)
   }
   const body: Record<string, unknown> = {
     model,
@@ -187,6 +188,73 @@ function buildBody(
   }
   if (req.extra) Object.assign(body, req.extra)
   return body
+}
+
+/**
+ * 把 LLMMessage 翻译成 OpenAI chat completion messages（可能产生多条）：
+ *   - content: string → 单条 { role, content }
+ *   - content: LLMContentBlock[] →
+ *       同一 assistant 的 text/tool_call 合并到一条 { role:'assistant', content, tool_calls }
+ *       每个 tool_result 单独输出一条 { role:'tool', tool_call_id, content }
+ *       user 的 text blocks 合并成 content 字符串
+ *
+ * OpenAI 协议关键点：
+ *   - tool result 必须用 role:'tool' + tool_call_id（不能像 Anthropic 那样塞在 user 里）
+ *   - assistant 的 tool_calls 是 message-level 字段，不是 content array 元素
+ */
+/** Exported for unit tests; do not depend on this from outside the llm package. */
+export function appendOpenAIMessages(
+  out: OpenAI.Chat.ChatCompletionMessageParam[],
+  m: LLMMessage,
+): void {
+  if (typeof m.content === 'string') {
+    out.push({ role: m.role, content: m.content } as OpenAI.Chat.ChatCompletionMessageParam)
+    return
+  }
+  if (m.role === 'assistant') {
+    const textParts: string[] = []
+    const toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[] = []
+    for (const b of m.content) {
+      if (b.type === 'text') {
+        textParts.push(b.text)
+      } else if (b.type === 'tool_call') {
+        toolCalls.push({
+          id: b.callId,
+          type: 'function',
+          function: { name: b.name, arguments: JSON.stringify(b.args ?? {}) },
+        })
+      }
+      // tool_result 不应在 assistant 里出现；忽略
+    }
+    const msg: OpenAI.Chat.ChatCompletionAssistantMessageParam = {
+      role: 'assistant',
+      // OpenAI 要求 assistant 至少有 content 或 tool_calls 之一；text 为空则 null
+      content: textParts.length > 0 ? textParts.join('\n') : null,
+    }
+    if (toolCalls.length > 0) msg.tool_calls = toolCalls
+    // 仅当至少一者存在才输出，避免空 message
+    if (msg.content !== null || (msg.tool_calls && msg.tool_calls.length > 0)) {
+      out.push(msg)
+    }
+    return
+  }
+  // user role：tool_result blocks 拆成独立 role:'tool' messages，text blocks 合并
+  const textParts: string[] = []
+  for (const b of m.content) {
+    if (b.type === 'tool_result') {
+      out.push({
+        role: 'tool',
+        tool_call_id: b.callId,
+        content: b.output,
+      } as OpenAI.Chat.ChatCompletionToolMessageParam)
+    } else if (b.type === 'text') {
+      textParts.push(b.text)
+    }
+    // tool_call 不应在 user 里出现；忽略
+  }
+  if (textParts.length > 0) {
+    out.push({ role: 'user', content: textParts.join('\n') })
+  }
 }
 
 function toOpenAITool(t: LLMToolSchema): OpenAI.Chat.ChatCompletionTool {

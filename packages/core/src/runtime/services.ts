@@ -29,9 +29,21 @@ export interface RuntimeLLMClient {
   complete(req: RuntimeLLMRequest): Promise<RuntimeLLMResponse>
 }
 
+/**
+ * Protocol-agnostic content block IR — 与 @ai-emp/llm 的 LLMContentBlock 等价。
+ * 之所以重复定义而不 import：core 不依赖 llm 包，避免循环依赖。
+ */
+export type RuntimeLLMContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_call'; callId: string; name: string; args: unknown }
+  | { type: 'tool_result'; callId: string; output: string; isError?: boolean }
+
 export interface RuntimeLLMRequest {
   system?: string
-  messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+  messages: {
+    role: 'user' | 'assistant'
+    content: string | RuntimeLLMContentBlock[]
+  }[]
   tools?: {
     name: string
     description: string

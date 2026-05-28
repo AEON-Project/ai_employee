@@ -19,6 +19,7 @@
 import type { Repos } from '@ai-emp/storage'
 import type { MemoryServices, RecallHit } from '../memory/index.js'
 import { recall } from '../memory/index.js'
+import type { RuntimeLLMContentBlock } from '../runtime/services.js'
 
 export interface ComposeInput {
   reqId: string
@@ -32,7 +33,10 @@ export interface ComposeInput {
 
 export interface ComposedPrompt {
   system: string
-  messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+  messages: {
+    role: 'user' | 'assistant'
+    content: string | RuntimeLLMContentBlock[]
+  }[]
   tokensEstimate: number
   /**
    * Prompt cache 断点（system 字符串中的字节偏移）。
@@ -279,19 +283,28 @@ export async function compose(repos: Repos, input: ComposeInput): Promise<Compos
   )
   const messages: ComposedPrompt['messages'] = []
   messages.push({ role: 'user', content: `# 需求\n${req.title}\n\n${req.description}` })
+  // V2 P0 bug 4 修复：输出结构化 LLMContentBlock，让 provider 翻译成原生 tool_use/tool_result。
+  // 之前字符串化 ("→ tool_call: Bash({...})" / "[tool_result]\n...") 只对 Anthropic 凑效；
+  // OpenAI 视角下 LLM 看不到自己真的发过 tool_call，gpt-5.x 会陷入 stop loop 反复问"贴代码"。
   for (const m of recent) {
-    const text = extractText(m.contentJson)
-    if (!text) continue
-    if (m.role === 'user' || m.role === 'assistant') {
-      messages.push({ role: m.role, content: text })
+    const block = extractBlock(m.contentJson)
+    if (!block) continue
+    if (m.role === 'assistant') {
+      messages.push({ role: 'assistant', content: [block] })
     } else if (m.role === 'tool') {
-      // V2 bugfix: tool_result 用 'user' role 注入，让 LLM 清楚区分"工具返回的观察"
-      // 之前 role='assistant' + 字符串 "[tool] tool_result" 丢失所有工具实际内容，
-      // 导致 LLM 看不到上轮命令结果反复跑同样命令（如 git status 死循环）。
-      messages.push({ role: 'user', content: `[tool_result]\n${text}` })
+      // tool_result 在 IR 层放 user role（与 Anthropic 协议一致）；
+      // OpenAI provider 翻译时拆成独立的 role:'tool' message
+      messages.push({ role: 'user', content: [block] })
+    } else if (m.role === 'user') {
+      messages.push({ role: 'user', content: [block] })
     } else if (m.role === 'system') {
-      // 系统通知 / error 也注入（V2 用于 advance_step.blocked / notify-on-exit 等）
-      messages.push({ role: 'user', content: `[system]\n${text}` })
+      // 系统通知 / error 走文本 block 注入到 user 里（与之前一致）
+      if (block.type === 'text') {
+        messages.push({
+          role: 'user',
+          content: [{ type: 'text', text: `[system]\n${block.text}` }],
+        })
+      }
     }
   }
 
@@ -343,63 +356,74 @@ function dedupeMonotonicBreakpoints(raw: number[], systemLen: number): number[] 
   return out
 }
 
-// V2 bugfix: tool result/call/error 都序列化成 LLM 能消化的可读字符串。
-// 之前 tool_result 返回字符串 "tool_result" 丢失所有内容 — LLM 看不到上轮 stdout
-// 反复跑同样命令死循环。
+// V2 P0 bug 4 修复：抽出结构化 LLMContentBlock，让 provider 翻译成原生 tool_use/tool_result。
+// 之前 extractText 字符串化所有内容只对 Anthropic 凑效；OpenAI 视角下 LLM 看不到自己
+// 真的发过 tool_call，gpt-5.x 会陷入 stop loop 反复问"请贴代码"。
 const TOOL_OUTPUT_TRUNCATE = 2000
 
-function extractText(c: unknown): string | null {
+function extractBlock(c: unknown): RuntimeLLMContentBlock | null {
   if (!c || typeof c !== 'object') return null
   const o = c as Record<string, unknown>
   const ty = typeof o.type === 'string' ? o.type : ''
   if (ty === 'text' || ty === 'thinking') {
-    return typeof o.text === 'string' ? o.text : null
+    return typeof o.text === 'string' ? { type: 'text', text: o.text } : null
   }
   if (ty === 'plan_update') {
-    return `plan_update: ${typeof o.reason === 'string' ? o.reason : ''}`
+    return {
+      type: 'text',
+      text: `plan_update: ${typeof o.reason === 'string' ? o.reason : ''}`,
+    }
   }
   if (ty === 'tool_call') {
     const name = typeof o.name === 'string' ? o.name : '?'
-    const argsStr = JSON.stringify(o.args ?? {}).slice(0, TOOL_OUTPUT_TRUNCATE)
-    return `→ tool_call: ${name}(${argsStr})`
+    const callId = typeof o.callId === 'string' ? o.callId : ''
+    if (!callId) return null
+    return { type: 'tool_call', callId, name, args: o.args ?? {} }
   }
   if (ty === 'tool_result') {
+    const callId = typeof o.callId === 'string' ? o.callId : ''
+    if (!callId) return null
     const ok = o.ok
     const value = o.value as Record<string, unknown> | string | undefined
     const error = typeof o.error === 'string' ? o.error : null
     if (ok === false) {
-      return `← tool_result(error): ${error ?? 'unknown'}`
-    }
-    // value 是 string → 直接截断
-    if (typeof value === 'string') {
-      return `← tool_result(ok): ${value.slice(0, TOOL_OUTPUT_TRUNCATE)}`
-    }
-    // value 是 object（Bash 等返回 { stdout, stderr, exitCode, ... }）→ 抽取关键字段
-    if (value && typeof value === 'object') {
-      const v = value as Record<string, unknown>
-      const parts: string[] = []
-      if (typeof v.exitCode === 'number') parts.push(`exitCode=${v.exitCode}`)
-      if (typeof v.status === 'string') parts.push(`status=${v.status}`)
-      if (typeof v.stdout === 'string' && v.stdout.length > 0) {
-        parts.push(`stdout:\n${v.stdout.slice(0, TOOL_OUTPUT_TRUNCATE)}`)
+      return {
+        type: 'tool_result',
+        callId,
+        output: `error: ${error ?? 'unknown'}`,
+        isError: true,
       }
-      if (typeof v.stderr === 'string' && v.stderr.length > 0) {
-        parts.push(`stderr:\n${v.stderr.slice(0, 500)}`)
-      }
-      // 其他类型工具（MCP / Process / ...）：JSON 整 dump
-      if (parts.length === 0) {
-        return `← tool_result(ok): ${JSON.stringify(value).slice(0, TOOL_OUTPUT_TRUNCATE)}`
-      }
-      return `← tool_result(ok): ${parts.join('\n')}`
     }
-    return `← tool_result(ok): ${JSON.stringify(value ?? null).slice(0, TOOL_OUTPUT_TRUNCATE)}`
+    const output = formatToolOutput(value)
+    return { type: 'tool_result', callId, output }
   }
   if (ty === 'error') {
     const msg = typeof o.message === 'string' ? o.message : 'unknown'
-    return `error: ${msg}`
+    return { type: 'text', text: `error: ${msg}` }
   }
   if (ty === 'clarification_request') {
-    return typeof o.text === 'string' ? `[ask_user] ${o.text}` : null
+    return typeof o.text === 'string' ? { type: 'text', text: `[ask_user] ${o.text}` } : null
   }
   return null
+}
+
+function formatToolOutput(value: Record<string, unknown> | string | undefined): string {
+  if (typeof value === 'string') return value.slice(0, TOOL_OUTPUT_TRUNCATE)
+  if (value && typeof value === 'object') {
+    const v = value as Record<string, unknown>
+    const parts: string[] = []
+    if (typeof v.exitCode === 'number') parts.push(`exitCode=${v.exitCode}`)
+    if (typeof v.status === 'string') parts.push(`status=${v.status}`)
+    if (typeof v.stdout === 'string' && v.stdout.length > 0) {
+      parts.push(`stdout:\n${v.stdout.slice(0, TOOL_OUTPUT_TRUNCATE)}`)
+    }
+    if (typeof v.stderr === 'string' && v.stderr.length > 0) {
+      parts.push(`stderr:\n${v.stderr.slice(0, 500)}`)
+    }
+    if (parts.length === 0) {
+      return JSON.stringify(value).slice(0, TOOL_OUTPUT_TRUNCATE)
+    }
+    return parts.join('\n')
+  }
+  return JSON.stringify(value ?? null).slice(0, TOOL_OUTPUT_TRUNCATE)
 }
