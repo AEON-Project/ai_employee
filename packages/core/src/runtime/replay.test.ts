@@ -60,6 +60,16 @@ describe('replayRequirement', () => {
       credentials,
       bus,
       llm: scriptedLLM([
+        // V2 P0 守卫：业务工具调用 == 0 时 emit_deliverable 被拦；这里先跑 fake_bash 让守卫放行
+        [
+          {
+            type: 'tool_use_stop',
+            id: 't0',
+            name: 'fake_bash',
+            args: { command: 'echo prime' },
+          },
+          { type: 'message_stop', reason: 'tool_use' },
+        ],
         [
           {
             type: 'tool_use_stop',
@@ -76,7 +86,7 @@ describe('replayRequirement', () => {
       },
       toolExecutor: {
         async invoke() {
-          return { ok: false, error: { kind: 'unknown_tool', message: '' } }
+          return { ok: true, value: { status: 'completed', exitCode: 0, stdout: '', stderr: '' } }
         },
       },
       toolJsonSchema: () => ({}),

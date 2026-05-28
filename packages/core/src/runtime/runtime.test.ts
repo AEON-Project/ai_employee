@@ -88,6 +88,9 @@ function setup(scripts: Script): {
   repos: Repos
   reqId: string
   empId: string
+  /** 注入一条 fake 业务工具调用到 thread，绕过新加的"零业务工具 emit_deliverable"守卫。
+   *  用法：在 assign + execute 之前调一次。 */
+  primeBusinessTool: () => void
 } {
   const { db, sqlite } = openDatabase({ path: ':memory:' })
   migrate(sqlite)
@@ -148,13 +151,24 @@ function setup(scripts: Script): {
     budgetCap: DEFAULT_BUDGET_CAP,
   })
 
-  return { bus, services, repos, reqId, empId }
+  const primeBusinessTool = () => {
+    const t = repos.threads.findByRequirement(reqId)
+    if (!t) throw new Error('thread not yet created — call after assignRequirement')
+    repos.messages.append({
+      threadId: t.id,
+      role: 'assistant',
+      type: 'tool_call',
+      content: { type: 'tool_call', callId: 'prime_test', name: 'fake_bash', args: {} },
+    })
+  }
+
+  return { bus, services, repos, reqId, empId, primeBusinessTool }
 }
 
 // ── 用例 1：完整生命周期 ──────────────────────────────────────
 describe('executeRequirement', () => {
   test('一轮 advance_step → emit_deliverable → 待验收', async () => {
-    const { services, repos, reqId, empId, bus } = setup([
+    const { services, repos, reqId, empId, bus, primeBusinessTool } = setup([
       // turn 0: advance_step
       [
         { type: 'text_delta', text: '分析中...' },
@@ -181,6 +195,7 @@ describe('executeRequirement', () => {
     ])
 
     assignRequirement(services, reqId, empId, { skipClarification: true })
+    primeBusinessTool() // V2 P0 守卫：业务工具调用 == 0 时 emit_deliverable 被拦；mock 简化测试需 prime
 
     const stateEvents: string[] = []
     bus.on('requirement.state_changed', (p) => stateEvents.push(`${p.from}→${p.to}`))
@@ -198,7 +213,7 @@ describe('executeRequirement', () => {
   })
 
   test('ask_user → 等待回答 → answerClarification → 继续', async () => {
-    const { services, repos, reqId, empId, bus } = setup([
+    const { services, repos, reqId, empId, bus, primeBusinessTool } = setup([
       // turn 0: ask_user
       [
         {
@@ -226,6 +241,7 @@ describe('executeRequirement', () => {
     ])
 
     assignRequirement(services, reqId, empId, { skipClarification: true })
+    primeBusinessTool() // V2 P0 守卫：业务工具调用 == 0 时 emit_deliverable 被拦
 
     const clarReady: string[] = []
     bus.on('requirement.clarification_ready', (p) => clarReady.push(p.clarificationId))
@@ -286,7 +302,7 @@ describe('executeRequirement', () => {
   })
 
   test('thinking_delta 和 text_delta 切换时分别合并为各自的 message', async () => {
-    const { services, repos, reqId, empId } = setup([
+    const { services, repos, reqId, empId, primeBusinessTool } = setup([
       [
         { type: 'thinking_delta', text: '让' },
         { type: 'thinking_delta', text: '我' },
@@ -304,6 +320,7 @@ describe('executeRequirement', () => {
     ])
 
     assignRequirement(services, reqId, empId, { skipClarification: true })
+    primeBusinessTool()
     await executeRequirement(reqId, services)
 
     const thread = repos.threads.findByRequirement(reqId)!
@@ -643,9 +660,19 @@ describe('executeRequirement', () => {
   })
 
   test('emit_deliverable 不做"是否真改"对账，员工提交后直接进「待验收」由用户判断真假（借鉴 OpenClaw 设计）', async () => {
-    // 即使 LLM 声称改了文件但实际 0 个 Bash 调用 → 引擎不拦截，照样进入待验收。
-    // 用户在「待验收」状态看 git diff / 文件内容自己判断是否 reject。
+    // 调一次业务工具（cat 读文件 = "有干活的痕迹"）+ 系统级 emit_deliverable。
+    // 引擎不对账"是否真改了代码"——可能 LLM 只读没写但谎称写了——交给用户在「待验收」rej。
+    // V2 调整：新加 "0 业务工具 = 谎报必拦" 守卫见下一个测试。
     const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't0',
+          name: 'fake_bash',
+          args: { command: 'cat CardChannelTypeEnum.java' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
       [
         {
           type: 'tool_use_stop',
@@ -659,10 +686,20 @@ describe('executeRequirement', () => {
         { type: 'message_stop', reason: 'tool_use' },
       ],
     ])
+    services.toolExecutor.invoke = async () =>
+      ({
+        ok: true,
+        value: {
+          status: 'completed',
+          exitCode: 0,
+          stdout: 'enum CardChannelTypeEnum...',
+          stderr: '',
+        },
+      }) as never
     assignRequirement(services, reqId, empId, { skipClarification: true })
     await executeRequirement(reqId, services)
     expect(repos.requirements.findById(reqId)!.status).toBe('待验收')
-    // 不应有 "emit_deliverable 已阻止" 类 system/error
+    // 不应有 "emit_deliverable 已阻止" 类 system/error — 因为前面调过业务工具
     const thread = repos.threads.findByRequirement(reqId)!
     const msgs = repos.messages.listByThread(thread.id)
     const blocked = msgs.find(
@@ -674,8 +711,53 @@ describe('executeRequirement', () => {
     expect(blocked).toBeUndefined()
   })
 
-  test('V2 O1: emit_skill 写入 memory_items(kind=skill, scope=employee) + 思维链可见', async () => {
+  test('V2 P0: emit_deliverable 拦"零业务工具调用"（防 KYC 第 6 轮 LLM 第 1 轮直接 emit 谎报）', async () => {
+    // KYC 第 6 轮 gpt-5.3-chat-latest 第 1 轮 LLM 调用就走 emit_deliverable，
+    // 把 Java 代码贴在 contentText 里假装完成，绕过 detectLastToolFailure（无"上一个失败"）。
+    // 新守卫：thread 里业务工具（Bash/Edit/Write/MCP）调用次数 == 0 → 拦截 + 写 system error。
     const { services, repos, reqId, empId } = setup([
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't1',
+          name: 'emit_deliverable',
+          args: {
+            summary: '已实现 KYC 注册接口',
+            contentText: '@PostMapping(...) public BaseResponse<Foo> userRegister(...) { ... }',
+          },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 2: LLM 看到 system error 后真调 Bash 探索
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't2',
+          name: 'fake_bash',
+          args: { command: 'cat KycController.java' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+    ])
+    assignRequirement(services, reqId, empId, { skipClarification: true })
+    await executeRequirement(reqId, services)
+    const thread = repos.threads.findByRequirement(reqId)!
+    const msgs = repos.messages.listByThread(thread.id)
+    const blocked = msgs.find(
+      (m) =>
+        m.role === 'system' &&
+        m.type === 'error' &&
+        ((m.contentJson as { message?: string }).message ?? '').includes(
+          '本工单还没调用过任何工具',
+        ),
+    )
+    expect(blocked).toBeDefined()
+    // 拦截后工单不应进入"待验收"
+    expect(repos.requirements.findById(reqId)!.status).not.toBe('待验收')
+  })
+
+  test('V2 O1: emit_skill 写入 memory_items(kind=skill, scope=employee) + 思维链可见', async () => {
+    const { services, repos, reqId, empId, primeBusinessTool } = setup([
       // turn 0: emit_skill
       [
         {
@@ -709,6 +791,7 @@ describe('executeRequirement', () => {
       ],
     ])
     assignRequirement(services, reqId, empId, { skipClarification: true })
+    primeBusinessTool()
     const r = await executeRequirement(reqId, services)
     expect(r.exit).toBe('delivered')
 
@@ -732,7 +815,7 @@ describe('executeRequirement', () => {
   })
 
   test('V2 O1: emit_skill 缺必填字段 → 写 system/error，不写入 memory_items，流程继续', async () => {
-    const { services, repos, reqId, empId } = setup([
+    const { services, repos, reqId, empId, primeBusinessTool } = setup([
       // turn 0: 缺 steps
       [
         {
@@ -755,6 +838,7 @@ describe('executeRequirement', () => {
       ],
     ])
     assignRequirement(services, reqId, empId, { skipClarification: true })
+    primeBusinessTool()
     const r = await executeRequirement(reqId, services)
     expect(r.exit).toBe('delivered')
 
@@ -775,7 +859,7 @@ describe('executeRequirement', () => {
   })
 
   test('V2 O2: emit_lesson 写入 memory_items(kind=lesson, scope=employee)', async () => {
-    const { services, repos, reqId, empId } = setup([
+    const { services, repos, reqId, empId, primeBusinessTool } = setup([
       [
         {
           type: 'tool_use_stop',
@@ -800,6 +884,7 @@ describe('executeRequirement', () => {
       ],
     ])
     assignRequirement(services, reqId, empId, { skipClarification: true })
+    primeBusinessTool()
     const r = await executeRequirement(reqId, services)
     expect(r.exit).toBe('delivered')
 
@@ -899,7 +984,7 @@ describe('executeRequirement', () => {
   })
 
   test('V2 O2: rejectRequirement(reason) 自动写 employee.lesson + thread 留痕', async () => {
-    const { services, repos, reqId, empId } = setup([
+    const { services, repos, reqId, empId, primeBusinessTool } = setup([
       [
         {
           type: 'tool_use_stop',
@@ -911,6 +996,7 @@ describe('executeRequirement', () => {
       ],
     ])
     assignRequirement(services, reqId, empId, { skipClarification: true })
+    primeBusinessTool()
     await executeRequirement(reqId, services)
     expect(repos.requirements.findById(reqId)!.status).toBe('待验收')
 
@@ -937,7 +1023,7 @@ describe('executeRequirement', () => {
   })
 
   test('V2 O2: rejectRequirement 无 reason → 不写 lesson，只走状态转移', async () => {
-    const { services, repos, reqId, empId } = setup([
+    const { services, repos, reqId, empId, primeBusinessTool } = setup([
       [
         {
           type: 'tool_use_stop',
@@ -949,6 +1035,7 @@ describe('executeRequirement', () => {
       ],
     ])
     assignRequirement(services, reqId, empId, { skipClarification: true })
+    primeBusinessTool()
     await executeRequirement(reqId, services)
     await rejectRequirement(services, reqId)
     expect(repos.requirements.findById(reqId)!.status).toBe('已驳回')
@@ -1148,7 +1235,7 @@ describe('executeRequirement', () => {
   })
 
   test('V2 O3: spawn_employee targetEmployeeId 不存在 → system/error 不暂停', async () => {
-    const { services, repos, reqId, empId } = setup([
+    const { services, repos, reqId, empId, primeBusinessTool } = setup([
       // turn 0: spawn 给不存在的员工
       [
         {
@@ -1175,6 +1262,7 @@ describe('executeRequirement', () => {
       ],
     ])
     assignRequirement(services, reqId, empId, { skipClarification: true })
+    primeBusinessTool()
     const r = await executeRequirement(reqId, services)
     expect(r.exit).toBe('delivered')
     // 不应创建子工单
@@ -1405,7 +1493,7 @@ describe('executeRequirement', () => {
   })
 
   test('V1.4: LLM 429 错误自动退避重试，不立即 system_pause', async () => {
-    const { services, repos, reqId, empId } = setup([
+    const { services, repos, reqId, empId, primeBusinessTool } = setup([
       // turn 0: LLM 返回 429 error chunk
       [
         {
@@ -1430,6 +1518,7 @@ describe('executeRequirement', () => {
       ],
     ])
     assignRequirement(services, reqId, empId, { skipClarification: true })
+    primeBusinessTool()
     const r = await executeRequirement(reqId, services, { maxLlmRetries: 3 })
     // 应该走完到 delivered（而不是 paused）
     expect(r.exit).toBe('delivered')

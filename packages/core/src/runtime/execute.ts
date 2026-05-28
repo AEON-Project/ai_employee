@@ -493,6 +493,30 @@ function handleChunk(
 // 任一命中 → 返回错误简述给 advance_step / emit_deliverable 拦截使用；
 // 找到第一条 tool_result 后即停（不再往前看，避免历史失败误伤新成功）。
 // ──────────────────────────────────────────────────────────────
+/**
+ * V2 P0 修复：emit_deliverable 进入前检查 thread 里是否有过**任何**前置工具调用。
+ *
+ * 真实业务验证（KYC 第 6 轮）暴露 LLM 第 1 轮 LLM 调用就 emit_deliverable，
+ * 把代码贴在 contentText 里假装完成（0 个 tool_call）。detectLastToolFailure
+ * 拦不住"压根没调过工具"的情况。
+ *
+ * 这里只拦"零工作 emit"——只要前面调过任何工具（含 advance_step / ask_user 等
+ * 系统工具，说明 LLM 至少在跑流程；含 Bash / Edit 等业务工具，更明显在干活），
+ * 就放行；让用户在「待验收」按 OpenClaw 哲学自己验收真假。
+ *
+ * 注意：emit_deliverable 自身的 tool_call message 在 dispatch 这步**已经写入** thread
+ * （writeAssistantToolCall），所以这里要剔除"等于当前 callId"的那条，才能正确检测
+ * 它**之前**的工具调用数。
+ */
+function countBusinessToolCalls(repos: RuntimeServices['repos'], threadId: string): number {
+  const all = repos.messages.listByThread(threadId)
+  let n = 0
+  for (const m of all) {
+    if (m.type === 'tool_call') n++
+  }
+  return n
+}
+
 function detectLastToolFailure(repos: RuntimeServices['repos'], threadId: string): string | null {
   const recent = repos.messages.tailByThread(threadId, 10)
   for (let i = recent.length - 1; i >= 0; i--) {
@@ -710,6 +734,40 @@ async function dispatch(
     }
     case 'emit_deliverable': {
       const args = call.args as { contentText?: string; contentRef?: string; summary: string }
+      // V2 P0 修复 #2（emit_deliverable.blocked 之"零工作"分支）：
+      // thread 里**前置工具调用数 == 0** → LLM 一进来就 emit_deliverable = 谎报。
+      // KYC 第 6 轮 gpt-5.3-chat-latest 第 1 轮就 emit_deliverable 把 Java 代码贴在
+      // contentText 里假装完成，绕过 detectLastToolFailure（没有"上一个失败"可拦）。
+      // 子工单（spawn_employee 派生）由父级业务流保护，跳过本守卫；
+      // 否则子 thread 一进来就 emit 是合法的（任务可能就是一个查询）。
+      const reqRowForGuard = repos.requirements.findById(reqId)
+      const isSubRequirement = reqRowForGuard?.parentRequirementId != null
+      const businessToolCalls = isSubRequirement ? 1 : countBusinessToolCalls(repos, thread.id)
+      if (businessToolCalls === 0) {
+        log.warn('emit_deliverable.blocked', {
+          reqId,
+          reason: 'no_business_tool_calls',
+        })
+        repos.messages.append({
+          threadId: thread.id,
+          role: 'system',
+          type: 'error',
+          content: {
+            type: 'error',
+            message:
+              'emit_deliverable 已阻止：本工单还没调用过任何工具就直接交付 = 谎报。先调 Bash / Edit / Write 等工具真探索 + 修改代码 + 编译验证，再 emit_deliverable。',
+            fatal: false,
+          },
+        })
+        return {
+          kind: 'continue',
+          newState: {
+            currentStep: ctx.currentStep,
+            historySummary: ctx.historySummary,
+            budgetUsedJson: { iterations: 0, tokensIn: 0, tokensOut: 0, wallTimeMs: 0 },
+          },
+        }
+      }
       // V2 P0 修复（emit_deliverable.blocked）：上一次工具调用失败 → 拒绝交付
       // 不在 runtime 层判断"是否真改了文件"（借 OpenClaw 哲学），但若最后一步明显
       // 失败（exitCode≠0 / status='failed'），那不是"待用户判断真假"，而是 LLM

@@ -45,10 +45,21 @@ function mkServices(): { services: RuntimeServices; bus: TypedEventBus<EventMap>
   const keychain = new InMemoryKeychainStore()
   const credentials = new CredentialsRepo(db, keychain)
   const bus = new TypedEventBus<EventMap>()
+  // V2 P0 守卫：emit_deliverable 前必须有 1+ 业务工具调用；mock 两轮（fake_bash 后 emit）
+  let mockTurn = 0
   const llm: LLMFactory = {
     create: () => ({
       async *stream(): AsyncIterable<RuntimeLLMChunk> {
-        // 单步直接 emit_deliverable
+        if (mockTurn++ === 0) {
+          yield {
+            type: 'tool_use_stop',
+            id: 't0',
+            name: 'fake_bash',
+            args: { command: 'echo prime' },
+          }
+          yield { type: 'message_stop', reason: 'tool_use' }
+          return
+        }
         yield {
           type: 'tool_use_stop',
           id: 't1',
@@ -73,7 +84,7 @@ function mkServices(): { services: RuntimeServices; bus: TypedEventBus<EventMap>
     },
     toolExecutor: {
       async invoke() {
-        return { ok: false, error: { kind: 'unknown_tool', message: '' } }
+        return { ok: true, value: { status: 'completed', exitCode: 0, stdout: '', stderr: '' } }
       },
     },
     toolJsonSchema: () => ({}),

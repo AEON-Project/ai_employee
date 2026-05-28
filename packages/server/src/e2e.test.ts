@@ -95,7 +95,9 @@ function mkServices(scripts: Script): {
     },
     toolExecutor: {
       async invoke() {
-        return { ok: false, error: { kind: 'unknown_tool', message: 'no standard tool' } }
+        // 默认返回 ok=true 让 mock 业务工具（fake_bash 等）顺利"成功"，
+        // 这样 V2 P0 守卫（emit_deliverable 前必有业务工具调用）能正常通过。
+        return { ok: true, value: { status: 'completed', exitCode: 0, stdout: '', stderr: '' } }
       },
     },
     toolJsonSchema: () => ({}),
@@ -345,7 +347,17 @@ describe('#4 执行中再澄清', () => {
         },
         { type: 'message_stop', reason: 'tool_use' },
       ],
-      // turn 1 (回答后): emit_deliverable
+      // turn 1 (回答后): V2 P0 守卫前置业务工具
+      [
+        {
+          type: 'tool_use_stop',
+          id: 't_prime',
+          name: 'fake_bash',
+          args: { command: 'echo prime' },
+        },
+        { type: 'message_stop', reason: 'tool_use' },
+      ],
+      // turn 2: emit_deliverable
       [
         {
           type: 'tool_use_stop',
