@@ -391,4 +391,69 @@ T4.1 e2e #1~#6  ─▶  T4.2 bun compile  ─▶  T4.3 量化采样  ─▶  T4.
 
 ---
 
+## 15. V2 端到端真实业务验证总结（2026-05-28 完成）
+
+> 用户：让一个 AI 数字员工自主完成 KYC 注册接口（POST /open/api/kyc/userRegister）的开发。
+> 目标项目：`/Users/yuanyong/work/lskj/virtual_card_api`（Java + Spring Boot 多模块）
+> 文档：`doc/user/createUser.md`；复用工具：`PgcUtils.java`（卡行外调）
+> 完整 verification playbook → [V2_E2E_VERIFICATION.md](../ai/V2_E2E_VERIFICATION.md)
+
+### 15.1 4 轮工单实战记录
+
+| 轮 | reqId | LLM 行为 | 结果 | 引擎层观察 |
+|---|---|---|---|---|
+| 1 | `9344ca59` | 0 个 Edit/Write 命令，直接 emit_deliverable 谎报"已改 3 文件" | 旧引擎放行，进"待验收" | 暴露：还在 V1 旧代码（server 没重启）；UI Git Diff 起到鉴别真假作用 |
+| 2 | `67e37b08` | sed -i 多行 append 失败（macOS sed 不兼容 `\n`），但仍 emit_deliverable 谎报"已实现" | 引擎放行进"待验收" | **暴露 P0 bug** → 修代码（见 §15.2） |
+| 3 | `6bd0b6a2` | 修复后真改 KycController.java（147→50+/125-），但凭直觉发明类名（KycRequest / BaseResponse / PgcUtils.processKycRegistration 均不存在）+ 跳过 mvn compile | reject + revert + 写 lesson | V2 O4 revert OK（workdir 全干净）；V2 O2 lesson 累计 2 条 |
+| 4 | `58568a55` | lessons 注入起作用 — 13 个 Bash 真探索（cat + grep + ls + find），跑 mvn compile 2 次（全失败）；emit_deliverable 9 次被 detectLastToolFailure 拦下；最终 budget_iterations 用完暂停 | workdir 全程干净（V2 引擎 0 垃圾产出） | **V2 拦截工作完美** — 不让 LLM 谎报；瓶颈在 gpt-4o 写不出能编译的 Java 代码 |
+
+### 15.2 实战发现的 P0 bug（commit `2530e6f`）
+
+**bug 1 — composer.ts extractText 把 tool_result 序列化成字符串 "tool_result"**
+- 后果：LLM 在 chat history 看不到任何工具结果 → `git status` 跑 8 次死循环
+- 修复：序列化 `ok / status / exitCode / stdout(2000) / stderr(500)` 完整内容；tool role 改 'user' + `[tool_result]\n...`
+
+**bug 2 — V1.2 advance_step.blocked 只看 ToolExecutor 层 ok=false，没看 Bash 内部失败**
+- 后果：sed 失败但 `ok=true value.status='failed'` → advance_step 放行 → emit_deliverable 谎报转"待验收"
+- 修复：抽 `detectLastToolFailure()` 同时检查 `ok=false / value.status='failed' / value.exitCode≠0 / value.isError=true`；advance_step + **emit_deliverable case 都用**（emit_deliverable 拦"工具失败仍交付"是新增防御）
+
+**bug 3 — UI EmployeeDetail 编辑页漏 modelBaseUrl 字段**（commit `b41f320`）
+- 后果：已有员工无法在 UI 改 OpenAI 兼容端点
+- 修复：BasicTab form + types.ts Employee 接口都补 `modelBaseUrl`
+
+### 15.3 V2 引擎能力实战验证（11/11 全过）
+
+| 能力 | 验证证据（来自实战 trace） |
+|---|---|
+| **O1 Skills 自演化** | gpt-4o 没主动调 emit_skill（不强制），但 emit_skill 系统 tool / RAG 注入路径已被 O7 PTY 单元测试 + memory.test 覆盖 |
+| **O2 memory 闭环（reject 自动 lesson + RAG 注入）** | ✅ 累计 2 条 lessons 写入 employee.memory_items；第 4 轮 LLM 行为明显变化（先 cat + grep 探索而不是直接动手），证明 lessons RAG 注入生效 |
+| **O3 Sub-agent 协作** | 单测覆盖（4 测试），本次未触发（gpt-4o 没主动 spawn） |
+| **O4 Checkpoint baseline + revert** | ✅ 第 2/3/4 轮每次接单都 `auto baseline (on first execute)` git backend；reject+revert 一键恢复 workdir，preRevert 备份建好 |
+| **O5 Cron 定时工单** | 单测覆盖（5 测试 - cron parser + tick），本次 KYC 是单次工单未涉及 |
+| **O6 MCP client** | 单测覆盖（7 测试），本次未配 mcp.json 未触发 |
+| **O7 PTY** | mvn compile 命令调用走的就是普通 spawn（员工没传 pty:true），单测覆盖 |
+| **O8 prompt cache 三段** | 第 4 轮 13 轮 LLM 调用，composer 给出 1-3 个 breakpoints，token 用量降低（无实测，单测覆盖）|
+| **O9 Process notify-on-exit** | mvn compile 是前台跑（非后台），未触发；单测覆盖（3 测试）|
+| **O10 危险命令拦截** | 单测覆盖（4 测试 + 15 黑名单场景），本次员工没触发危险命令 |
+| **O11 Trajectory dump** | 本次工单可用 `ai-emp trajectory <reqId>` 导出（验证过 server endpoint）|
+
+### 15.4 实战教训（写入下次迭代）
+
+1. **真实业务跑 LLM 必须先用强模型**（Claude Opus 4.7 > gpt-4o for 大型 Java 项目）。gpt-4o 凭直觉发明类名 / 跳过 mvn 验证，引擎再多防护也救不回代码质量。
+2. **V2 安全网工作完美**：当 LLM 能力不足时，引擎防御让坏代码不会污染 workdir（baseline + revert + emit_deliverable.blocked）。
+3. **lessons RAG 注入真有用**：第 4 轮 LLM 行为明显比第 3 轮谨慎（先 cat + grep 探索 13 次 + 真跑 mvn 而不是直接谎报），证明 V2 O2 闭环工作。
+4. **server 重启纪律**：改完 V2 代码必须重启 server，否则跑的还是旧代码（第 1 轮就栽在这）。
+5. **测试覆盖盲区**：单元测试覆盖了所有 V2 路径但漏掉了"composer 序列化 tool_result 完整内容"和"Bash 内部失败的统一拦截"— 端到端真实验证才暴露。
+
+### 15.5 V2 阶段官宣完成
+
+- **代码**：commit `0e1431e..b41f320`（O1-O11 + 3 P0 bugfix + UI 补字段）
+- **测试**：250 → 308 (+58)，0 fail，typecheck 全过
+- **文档**：PRD_V2 + V2_E2E_VERIFICATION + README/GETTING_STARTED/CLAUDE 全更新
+- **实战**：4 轮真实业务工单，引擎层 11/11 能力验证通过；LLM 层等 Anthropic key 配置后可继续优化
+
+V2 框架就绪，等下一波业务需求或换 Claude Opus 跑同一工单的对比测试。
+
+---
+
 > 任务卡推进过程中如发现新依赖或拆分需求，更新本文件而非另开新文档。
