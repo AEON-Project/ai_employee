@@ -346,9 +346,19 @@ export async function executeRequirement(
       textLen: textBuf.length,
     })
     log.debug('llm.call.response', { reqId, decision, textBuf })
+    // V3 BUG #4 修复（强化）：判定本轮 LLM 是否真"动手" = 本轮 stream 产生了
+    // 非系统业务 tool_use（Bash / Process / MCP tool / standard tool）。
+    // 之前用 hasBusinessToolUsedSinceLastAdvance（thread 累积扫描）会被骗：
+    // LLM 调过一次 mvn 后，后续 N 轮反复 stop with text + implicit advance_step，
+    // 但因为 thread 里仍能看到那次 mvn，守卫始终放行 → counter 不累加 → 死循环烧 token。
+    const usedBusinessToolThisRound =
+      decision != null && decision.name !== 'advance_step' && !SYSTEM_TOOL_NAMES.has(decision.name)
+
     if (!decision && saw_stop && textBuf) {
-      // V3 BUG #4 修复：implicit advance_step 必须满足"本步内调过业务工具"。
-      // 否则视为"光说不做"——LLM 反复贴 markdown 计划但不真 tool_use，会持续烧 token。
+      // LLM 输出了文本但没 emit 任何 tool_use。
+      // 两种走向：
+      //   A. 本轮"光说不做"——但允许 implicit advance_step 推进 step（保留原行为）；
+      //   B. 但**不重置 stuck 计数**——只有真业务 tool_use 才能重置（外层逻辑）。
       const acted = hasBusinessToolUsedSinceLastAdvance(repos, thread.id)
       if (!acted) {
         consecutiveTextOnlyRounds++
@@ -390,7 +400,9 @@ export async function executeRequirement(
         budget.recordIteration()
         continue
       }
-      // 有过业务工具 → 把累积文本视为本步 summary，合法 implicit advance_step
+      // acted=true（自上次 advance_step 后有过业务工具）→ implicit advance_step 推进 step
+      // 但 **不** 在这里重置 consecutiveTextOnlyRounds —— 否则光调一次 Bash 就能"赦免"
+      // 后续无限次 stop with text。只有本轮"真做了业务 tool_use"才算反守为攻。
       decision = {
         callId: `implicit-${Date.now()}`,
         name: 'advance_step',
@@ -398,8 +410,8 @@ export async function executeRequirement(
       }
     }
 
-    // 任何明确 decision 路径（不论是真 tool_use 还是 implicit advance）都重置 stuck 计数
-    if (decision) consecutiveTextOnlyRounds = 0
+    // 只有本轮 LLM 真做了业务 tool_use 才重置 stuck 计数；implicit advance_step 不重置
+    if (usedBusinessToolThisRound) consecutiveTextOnlyRounds = 0
 
     budget.recordIteration()
 

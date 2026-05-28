@@ -377,7 +377,9 @@ function dedupeMonotonicBreakpoints(raw: number[], systemLen: number): number[] 
 // V2 P0 bug 4 修复：抽出结构化 LLMContentBlock，让 provider 翻译成原生 tool_use/tool_result。
 // 之前 extractText 字符串化所有内容只对 Anthropic 凑效；OpenAI 视角下 LLM 看不到自己
 // 真的发过 tool_call，gpt-5.x 会陷入 stop loop 反复问"请贴代码"。
-const TOOL_OUTPUT_TRUNCATE = 2000
+// V3 BUG #5：mvn compile 等长命令 stdout 容易超 2000 字符；末尾的 BUILD SUCCESS/FAILURE
+// 标记被砍掉后 LLM 误判结果。扩大到 8000 让常见编译/测试输出能完整看到。
+const TOOL_OUTPUT_TRUNCATE = 8000
 
 function extractBlock(c: unknown): RuntimeLLMContentBlock | null {
   if (!c || typeof c !== 'object') return null

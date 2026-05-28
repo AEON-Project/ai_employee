@@ -77,6 +77,42 @@ UI / WS / API 改动必走视觉验证 → [docs/ai/DEBUGGING.md](./docs/ai/DEBU
 
 ---
 
+## 🛡 改动前必读（修 BUG / 加功能）
+
+**动手之前必须先理解，不得"看到症状就改"**：
+
+1. **先读架构和历史**
+   - 看 [docs/architecture/ARCHITECTURE.md](./docs/architecture/ARCHITECTURE.md) + [CONVENTIONS.md](./docs/architecture/CONVENTIONS.md) 了解模块边界
+   - 看 [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md) + `git log -p <相关文件>` 了解这块代码的演进
+   - 看 [PRD_V1.md](./docs/product/PRD_V1.md) / [PRD_V2.md](./docs/product/PRD_V2.md) 了解功能背后的产品意图
+
+2. **理解"为什么是现在这样"**
+   - 现有代码不是凭空写的——找到当初的 commit message、CHANGELOG 条目、PRD 章节，看清楚**它当时解决的是什么问题**
+   - 看不出来就 `git blame` + `git show <hash>`，仍看不出来 → **问用户**，不要凭猜测覆盖
+   - 特别注意防御性代码 / 看似冗余的分支 / 奇怪的兜底——大概率是踩过坑后补的，删之前必须确认那个坑已经不存在
+
+3. **评估影响面**
+   - 改动落在哪几个 workspace 包？是否跨越洋葱依赖层？
+   - 是否影响：**框架契约**（核心抽象 / 事件 / DB schema / 工具协议）/ **用户可见行为**（UI 文案、CLI 输出、API 响应、Telegram 消息）/ **流程**（澄清 → 拆解 → 执行 → 沉淀的任一环节）
+   - 是否影响现有数据（迁移、历史工单回放、记忆库读取）
+
+4. **影响框架/用户/流程 → 必须先问，不得擅自改**
+   - 命中以下任一项，**先停下来向用户确认方案再动手**：
+     - 改动核心抽象（EventBus / Runtime 状态机 / Memory 接口 / Tool 协议 / Prompt composer）
+     - 改动 DB schema 或需要数据迁移
+     - 改动用户可见文案、UI 交互、API/WS 契约、CLI 子命令语义
+     - 改动 PRD 已定义的核心流程（澄清前置 / 三栏透明 / 纠错沉淀）
+     - 涉及 [PRD §11 "V1.0 明确不做"](./docs/product/PRD_V1.md#十一v10-明确不做重要) 边界
+   - 只是局部 bug 修复 / 内部重构 / 加测试 / 补日志埋点 → 可以直接做
+
+5. **不允许的捷径**
+   - ❌ 看到测试挂了直接改测试断言迁就实现
+   - ❌ 看到防御分支碍事直接删掉
+   - ❌ 看到旧逻辑"不优雅"顺手重构（即便看似无害）
+   - ❌ 用 `--no-verify` / 跳过 typecheck / 注释掉测试绕过失败
+
+---
+
 ## 🛠 常用命令
 
 ```bash
@@ -121,6 +157,37 @@ cli  →  server / bridge-tg          ← 入口层
 
 详细架构决策 + 工程坑 → [docs/architecture/CONVENTIONS.md](./docs/architecture/CONVENTIONS.md)（10 节）
 完整技术架构 → [docs/architecture/ARCHITECTURE.md](./docs/architecture/ARCHITECTURE.md)
+
+---
+
+## 🧰 技能 vs 工单描述（V3 规范）
+
+**核心原则**：能沉淀到「员工技能」里的，绝不重复写到工单描述里。工单描述只讲"做什么 / 为什么"，不讲"怎么做的工程细节"。
+
+### 工单描述写什么
+
+- 业务目标（一两句话）
+- 验收标准（怎么算完成）
+- 必须知道的项目级事实（路径、外部依赖、约束条件）
+
+### 工单描述**不**写什么
+
+- 通用工具用法（如"Bash 没有 apply_patch，写文件用 cat heredoc"）→ 沉淀到 `Bash 工具规范` 技能
+- 编程语言/框架的标准做法（如 Spring Boot 分层、Lombok @Data、APIResponse 返回包装）→ 沉淀到岗位技能（如 `Java Spring Boot 后端开发`）
+- 编译/构建工具的判定方法（如"看 `BUILD SUCCESS` 字符串"、"区分 WARNING 和 ERROR"、"-U 强制刷新"）→ 沉淀到 `Maven 编译验证` 技能
+- 命令模板（如"`cd module && JAVA_HOME=... mvn compile`"）→ 沉淀到对应技能
+- 反复出现的硬规则（如"路径不臆造 / 不要 ask_user / exit≠0 不 advance_step"）→ 沉淀到员工 `persona` 或 `Bash 工具规范` 技能
+
+### 怎么沉淀技能
+
+- 出现"plan 描述里塞了一堆通用规则才能跑通"——说明缺技能
+- 出现"换个员工就要重写一遍 plan"——说明该写技能
+- 加技能用 `skills` 表 + `employee_skills` 绑定；技能的 `prompt_template` 被 prompt composer 自动注入 system prompt
+- 同一规则在多个工单里重复 ≥2 次 → 必须提取成技能
+
+### 失败案例
+
+> V3 自动化测试 trial 4：工单描述塞了 JDK 路径、mvn 命令模板、`-U` 重试技巧、stdout 判定方法——结果小后照搬命令跑出 BUILD SUCCESS 但**误判 stdout 没识别**。这些应该是 `Maven 编译验证` 技能的标准内容，而不是塞 plan。
 
 ---
 
