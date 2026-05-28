@@ -42,7 +42,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`2530e6f` fix(runtime+prompt): V2 P0 修复 — emit_deliverable/advance_step 拦"上一步工具失败" + composer 完整序列化 tool_result；端到端 KYC 验证发现并修复 2 个 P0 bug；308 pass
+> 最近：`9fd305b` docs: ALPHA_TASKS §15 — V2 端到端真实业务验证总结（4 轮 KYC 实战 + 3 个 P0 bug 修复 + V2 11/11 能力实战验证）
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
