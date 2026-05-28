@@ -12,6 +12,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## 🎯 北极星（对标 OpenClaw / hermes-agent，严格遵守）
+
+本项目对标的两个开源同类是 **OpenClaw** 与 **hermes-agent**（CHANGELOG `cd6ec32` / `562207c` 已多次借鉴/防谎报）。**所有改动必须朝下面四个维度更进一步，做不到就别做**：
+
+1. **准确率更高**
+   - 工单完成率↑ / 首次成功率↑ / 谎报率↓（emit_deliverable 拦"零业务工具调用"参考 `562207c` `cd6ec32`）
+   - 每次改动必须跑端到端不回归（PRD §12 #1-#6 + V2 11 项）
+   - 不允许"看起来过了就行"——LLM 输出要校验实际副作用（文件改没改、命令真跑了没、stdout 匹配没）
+
+2. **效率更高**
+   - 单工单完成所需 **LLM 轮次更少** / **墙钟时间更短**
+   - 砍掉无意义的 round-trip：同样信息不重复确认、tool 调完必须推进状态机、不要"问完又问"
+   - 工具粒度合适——能一次拿到的别拆成 N 次
+
+3. **Token 更少**
+   - System prompt 不堆冗余规则 → 沉淀到「员工技能」（见下方「🧰 技能 vs 工单描述」）
+   - history 窗口、tool schema 体积、记忆召回字数都要算账
+   - 新增字段 / 新增 event payload / 新增 prompt 段落前，先问"能不能不发 / 能不能更短"
+   - 不为"以防万一"塞内容；说一遍够就别说两遍
+
+4. **用户体验更好**
+   - 三栏透明（思维链 / 当前步骤 / 下一步计划）始终一致，不允许某条路径退化成黑盒
+   - 错误信息对用户**可读 + 可行动**，不抛原始堆栈
+   - 三入口（UI / Telegram / CLI）行为一致；不擅自改文案 / 交互（见「🛡 改动前必读」§5）
+   - 澄清前置不要变成"无限追问"，记忆沉淀不要变成"满屏打扰"
+
+**自检**：每次提交前能不能说出"这次在四个维度的哪一个上更优"？说不出来 → 大概率不该做这次改动。
+
+---
+
 ## 📦 产品需求
 
 **当前版本：V1.0 引擎验证版** — 已交付。
@@ -99,11 +129,23 @@ UI / WS / API 改动必走视觉验证 → [docs/ai/DEBUGGING.md](./docs/ai/DEBU
 4. **评估方案是否合理**（动手写代码前先在脑子里过一遍）
    - **用户使用场景**：真实用户在 UI / Telegram / CLI 三种入口下怎么用到这块？正常路径 + 异常路径都想清楚（网络抖、LLM 超时、工具失败、用户中途取消、跨会话回放）；是否引入新的认知负担或破坏现有交互直觉
    - **系统稳定性**：失败时怎么降级？是否引入新的死锁 / 竞态 / 资源泄漏 / 长事务？是否破坏已有的幂等性、事务边界、事件顺序？Runtime 状态机是否仍能被驱动到终态？
-   - **代码复用**：项目里是否已有同类抽象可直接用（EventBus / Memory / Metrics / Prompt composer / Tool 协议 / storage 层）？不要重复造轮子；若新写的能力多处可用，考虑下沉到 core 而非堆在入口层
+   - **代码复用（本仓库内部）**：项目里是否已有同类抽象可直接用（EventBus / Memory / Metrics / Prompt composer / Tool 协议 / storage 层）？不要重复造轮子；若新写的能力多处可用，考虑下沉到 core 而非堆在入口层
    - **方案最小性**：是不是解决当前问题最简单的写法？不为假想的未来需求做抽象、不顺手扩边界（参考 CLAUDE.md 顶部 "Doing tasks" 段——不加多余 fallback / validation / 抽象）
    - **可观测性**：失败路径有没有日志埋点（`~/.ai-emp/logs/`）让下次能"日志先行"定位？关键状态变化有没有 metric / event？
 
-5. **影响框架/用户/流程 → 必须先问，不得擅自改**
+5. **先查友商实现（OpenClaw / hermes-agent），不重复造轮子**
+   - **本地参考路径**（设计、开发、修改任何功能前必查）：
+     - `/Users/yuanyong/work/aeon/OpenClaw` — 同类 agent 引擎（CHANGELOG `ee728f8` `1eff507` `07dcbfe` 已多次借鉴）
+     - `/Users/yuanyong/work/aeon/hermes-agent` — Nous Research，self-improving agent（CHANGELOG `1a1ee56` `0e1431e` `cd6ec32` 已借鉴 Skills 自演化 / Checkpoint / 谎报防御）
+   - **判定顺序**：
+     1. 用 `rg` / `grep -r` / `find` 在两个仓库里搜同类能力（关键词 / 模块名 / tool 协议 / prompt 模板 / state machine 设计）
+     2. **能直接 copy 的** → 直接 copy 过来 + 适配 Bun 与项目命名 + 注明来源（commit message 标 "参考 OpenClaw <path>" 或 "参考 hermes-agent <path>"）
+     3. **思路通但实现不一样的** → 借鉴设计后写适配版（CHANGELOG `cd6ec32` `ee728f8` `1eff507` `0e1431e` 都是这种做法）
+     4. **都没有 / 都有缺陷** → 才自研，并在 commit message / CHANGELOG 说清"为何不借鉴"
+   - **不允许**：跳过这一步直接拍脑袋写新代码；写完才发现友商已有同款 = 白做一遍且大概率兼容性差、token/效率/UX 不达「🎯 北极星」
+   - **自检**：每次提交前能不能说出"友商 X 怎么做的，我们这么做差别在哪、是更优还是权衡"——说不出来 → 回头查
+
+6. **影响框架/用户/流程 → 必须先问，不得擅自改**
    - 命中以下任一项，**先停下来向用户确认方案再动手**：
      - 改动核心抽象（EventBus / Runtime 状态机 / Memory 接口 / Tool 协议 / Prompt composer）
      - 改动 DB schema 或需要数据迁移
@@ -112,7 +154,7 @@ UI / WS / API 改动必走视觉验证 → [docs/ai/DEBUGGING.md](./docs/ai/DEBU
      - 涉及 [PRD §11 "V1.0 明确不做"](./docs/product/PRD_V1.md#十一v10-明确不做重要) 边界
    - 只是局部 bug 修复 / 内部重构 / 加测试 / 补日志埋点 → 可以直接做
 
-6. **不允许的捷径**
+7. **不允许的捷径**
    - ❌ 看到测试挂了直接改测试断言迁就实现
    - ❌ 看到防御分支碍事直接删掉
    - ❌ 看到旧逻辑"不优雅"顺手重构（即便看似无害）
