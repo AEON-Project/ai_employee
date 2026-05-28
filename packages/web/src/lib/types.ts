@@ -20,6 +20,7 @@ export interface Employee {
   modelProvider: 'anthropic' | 'openai-compat'
   modelName: string
   modelKeyRef: string
+  modelBaseUrl: string | null
   memoryStyleText: string
   status: 'active' | 'archived'
   createdAt: string

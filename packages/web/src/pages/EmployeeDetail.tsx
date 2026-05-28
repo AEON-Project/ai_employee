@@ -112,6 +112,7 @@ function BasicTab({ emp, onSaved }: { emp: Employee; onSaved: () => void }) {
     modelProvider: emp.modelProvider,
     modelName: emp.modelName,
     modelKeyRef: emp.modelKeyRef,
+    modelBaseUrl: emp.modelBaseUrl ?? '',
   })
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
@@ -120,7 +121,10 @@ function BasicTab({ emp, onSaved }: { emp: Employee; onSaved: () => void }) {
     setSaving(true)
     setMsg('')
     try {
-      await api.patch(`/api/employees/${emp.id}`, form)
+      // 空字符串当 null 传，让 server 知道用户清空了
+      const body: Record<string, unknown> = { ...form }
+      body.modelBaseUrl = form.modelBaseUrl.trim() === '' ? null : form.modelBaseUrl.trim()
+      await api.patch(`/api/employees/${emp.id}`, body)
       setMsg('已保存')
       onSaved()
     } catch (ex) {
@@ -167,6 +171,13 @@ function BasicTab({ emp, onSaved }: { emp: Employee; onSaved: () => void }) {
           label="modelKeyRef（keychain key 或 env://NAME）"
           value={form.modelKeyRef}
           onChange={(v) => setForm({ ...form, modelKeyRef: v })}
+        />
+      </div>
+      <div>
+        <Field
+          label="modelBaseUrl（OpenAI 兼容协议自定义端点，留空走 SDK 默认；可用 env://AIEMP_OPENAI_BASE_URL）"
+          value={form.modelBaseUrl}
+          onChange={(v) => setForm({ ...form, modelBaseUrl: v })}
         />
       </div>
       <div className="flex items-center gap-3">

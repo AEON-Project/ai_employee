@@ -42,7 +42,7 @@ _无；接到新需求请按 [WORKFLOW §A](./docs/ai/WORKFLOW.md#a-接到新需
 
 ### 已交付（最近 5 条 / 完整见 CHANGELOG）
 
-> 最近：`b491a57` docs(C): 整理 V2 文档 — 新增 PRD_V2 + V2_E2E_VERIFICATION + 更新 README/GETTING_STARTED/CLAUDE；V1+V2 文档体系完整版
+> 最近：`2530e6f` fix(runtime+prompt): V2 P0 修复 — emit_deliverable/advance_step 拦"上一步工具失败" + composer 完整序列化 tool_result；端到端 KYC 验证发现并修复 2 个 P0 bug；308 pass
 > 完整提交记录 → [docs/progress/CHANGELOG.md](./docs/progress/CHANGELOG.md)
 
 ---
